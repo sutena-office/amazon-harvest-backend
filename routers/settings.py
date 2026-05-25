@@ -13,6 +13,7 @@ DEFAULT_SETTINGS = {
     "max_rank": 100000,
     "amazon_fee_rate": 15.4,
     "line_user_id": "",
+    "discord_webhook_url": "",
     "notify_enabled": False,
 }
 
@@ -24,6 +25,7 @@ class SettingsUpdate(BaseModel):
     max_rank: Optional[int] = None
     amazon_fee_rate: Optional[float] = None
     line_user_id: Optional[str] = None
+    discord_webhook_url: Optional[str] = None
     notify_enabled: Optional[bool] = None
 
 
@@ -42,5 +44,7 @@ async def update_settings(settings: SettingsUpdate, current_user=Depends(get_cur
     if existing.data:
         supabase.table("harvest_settings").update(update_data).eq("user_id", current_user.id).execute()
     else:
-        supabase.table("harvest_settings").insert({**DEFAULT_SETTINGS, **update_data, "user_id": current_user.id}).execute()
+        supabase.table("harvest_settings").insert({
+            **DEFAULT_SETTINGS, **update_data, "user_id": current_user.id
+        }).execute()
     return {"message": "設定を更新しました"}

@@ -3,7 +3,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from database import supabase
 from research.keepa_deals import get_keepa_deals, parse_deal
 from research.profit import calculate_profit
-from research.notify import send_line_notification
+from research.notify import notify_all
 
 logger = logging.getLogger(__name__)
 
@@ -15,31 +15,27 @@ DEFAULT_SETTINGS = {
     "amazon_fee_rate": 15.4,
     "notify_enabled": False,
     "line_user_id": None,
+    "discord_webhook_url": None,
 }
 
 
 def run_harvest_for_all_users():
+    """全ユーザー向けにKeepa Dealsをスキャンして刈り取り候補を保存・通知する"""
     try:
         response = supabase.table("harvest_settings").select("*").execute()
         users = response.data or []
         if not users:
-            # 設定がないユーザーには管理者の設定でデフォルト実行
             print("[HARVEST] 設定ユーザーなし、スキップ", flush=True)
             return
 
-        # Keepa Deals APIは全ユーザー共通で1回だけ呼ぶ（トークン節約）
-        # 最も広い条件（最小の値下がり率）で取得し、ユーザーごとにフィルタ
-        min_drop = min(
-            s.get("min_drop_rate", 20) for s in users
-        )
-        max_rank = max(
-            s.get("max_rank", 100000) for s in users
-        )
+        # 最も緩い条件（最小の値下がり率）でまとめて取得
+        min_drop = min(s.get("min_drop_rate", 20) for s in users)
+        max_rank = max(s.get("max_rank", 100000) for s in users)
 
         raw_deals = get_keepa_deals(
             min_drop_percent=min_drop,
             max_rank=max_rank,
-            date_range=2,
+            date_range=1,  # 直近24時間（5分ごとのため短くする）
         )
 
         parsed = [parse_deal(d) for d in raw_deals]
@@ -63,17 +59,14 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None):
     min_drop_rate = setting.get("min_drop_rate", DEFAULT_SETTINGS["min_drop_rate"])
     max_rank = setting.get("max_rank", DEFAULT_SETTINGS["max_rank"])
     amazon_fee_rate = setting.get("amazon_fee_rate", DEFAULT_SETTINGS["amazon_fee_rate"])
-    line_user_id = setting.get("line_user_id")
-    notify_enabled = setting.get("notify_enabled", False)
 
     print(f"[HARVEST] ユーザー処理開始 user_id={user_id}", flush=True)
 
-    # 直接呼ばれた場合はAPIを叩く
     if parsed_deals is None:
         raw_deals = get_keepa_deals(
             min_drop_percent=min_drop_rate,
             max_rank=max_rank,
-            date_range=2,
+            date_range=1,
         )
         parsed_deals = [parse_deal(d) for d in raw_deals]
         parsed_deals = [p for p in parsed_deals if p is not None]
@@ -81,7 +74,6 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None):
     profitable = []
 
     for deal in parsed_deals:
-        # ユーザー条件でフィルタ
         if deal["price_drop_rate"] < min_drop_rate:
             continue
         if max_rank > 0 and deal["amazon_rank"] > max_rank:
@@ -91,13 +83,6 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None):
             buy_price=deal["current_price"],
             sell_price=deal["regular_price"],
             amazon_fee_rate=amazon_fee_rate,
-        )
-
-        print(
-            f"[HARVEST]   {deal['product_name'][:25]} "
-            f"仕入:{deal['current_price']}円 転売:{deal['regular_price']}円 "
-            f"利益率:{profit_result['profit_rate']}%",
-            flush=True,
         )
 
         if (
@@ -116,9 +101,8 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None):
                 "profit_rate": profit_result["profit_rate"],
                 "amazon_fee_rate": amazon_fee_rate,
             }
-            profitable.append(record)
 
-            # DBに保存（重複チェック: 同一ASIN×同日は1件まで）
+            # 直近12時間で同一ASINが既に保存済みなら重複スキップ
             try:
                 existing = (
                     supabase.table("harvest_results")
@@ -130,20 +114,23 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None):
                 )
                 if not existing.data:
                     supabase.table("harvest_results").insert(record).execute()
-                    print(f"[HARVEST]   → 保存: {deal['asin']}", flush=True)
+                    profitable.append(record)
+                    print(f"[HARVEST]   → 新規保存: {deal['asin']} 利益率:{profit_result['profit_rate']}%", flush=True)
                 else:
                     print(f"[HARVEST]   → 重複スキップ: {deal['asin']}", flush=True)
             except Exception as e:
                 print(f"[HARVEST]   → DB保存エラー: {e}", flush=True)
 
-    print(f"[HARVEST] 完了: 候補{len(profitable)}件 user={user_id}", flush=True)
+    print(f"[HARVEST] 完了: 新規候補{len(profitable)}件 user={user_id}", flush=True)
 
-    if profitable and notify_enabled and line_user_id:
-        send_line_notification(line_user_id, profitable)
+    # 新規発見分のみ通知（重複は通知しない）
+    if profitable:
+        notify_all(setting, profitable)
 
 
 def start_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(run_harvest_for_all_users, "interval", minutes=30)
+    # 5分ごとにスキャン（アマレーダー級の即時性）
+    scheduler.add_job(run_harvest_for_all_users, "interval", minutes=5)
     scheduler.start()
-    logger.info("Harvest Scheduler started - 30分ごとに実行")
+    logger.info("Harvest Scheduler started - 5分ごとに実行")
