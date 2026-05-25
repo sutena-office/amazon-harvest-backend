@@ -1,0 +1,123 @@
+import os
+import requests
+from typing import Optional
+from dotenv import load_dotenv
+
+load_dotenv()
+
+KEEPA_API_KEY = os.getenv("KEEPA_API_KEY")
+
+
+def get_keepa_deals(
+    min_drop_percent: float = 20.0,
+    max_rank: int = 100000,
+    date_range: int = 2,
+    page: int = 0,
+) -> list:
+    """
+    Keepa Deals APIで値下がり商品を取得する。
+    date_range: 1=24時間以内, 2=48時間以内, 3=1週間以内
+    """
+    if not KEEPA_API_KEY:
+        print("[KEEPA_DEALS] APIキー未設定", flush=True)
+        return []
+
+    url = "https://api.keepa.com/deals"
+    params = {
+        "key": KEEPA_API_KEY,
+        "domainId": 5,          # amazon.co.jp
+        "page": page,
+        "priceTypes": "0",      # Amazon本体価格
+        "deltaPercent": int(-abs(min_drop_percent)),  # 負の値=値下がり率
+        "dateRange": date_range,
+    }
+    if max_rank > 0:
+        params["salesRankRange"] = f"1,{max_rank}"
+
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        print(f"[KEEPA_DEALS] status={response.status_code}", flush=True)
+
+        if response.status_code != 200:
+            print(f"[KEEPA_DEALS] エラー: {response.text[:300]}", flush=True)
+            return []
+
+        data = response.json()
+        tokens_left = data.get("tokensLeft", "不明")
+        print(f"[KEEPA_DEALS] トークン残量: {tokens_left}", flush=True)
+
+        deals_data = data.get("deals", {})
+        if isinstance(deals_data, dict):
+            dr = deals_data.get("dr", [])
+        else:
+            dr = []
+
+        print(f"[KEEPA_DEALS] {len(dr)}件取得", flush=True)
+        return dr
+
+    except Exception as e:
+        print(f"[KEEPA_DEALS] 例外: {e}", flush=True)
+        return []
+
+
+def parse_deal(deal: dict) -> Optional[dict]:
+    """
+    ディールデータを解析して刈り取り候補情報を返す。
+    通常価格として90日平均を使用し、現在価格との差額で利益を計算する。
+    """
+    asin = deal.get("asin", "")
+    if not asin:
+        return None
+
+    title = (deal.get("title") or "").strip()
+
+    # 現在価格（値下がり後）
+    current = deal.get("current") or []
+    current_price = _get_price(current, 0)
+
+    # 通常価格の推定: 90日平均 > 180日平均 の順で参照
+    avg90 = deal.get("avg90") or []
+    avg180 = deal.get("avg180") or []
+    avg90_price = _get_price(avg90, 0)
+    avg180_price = _get_price(avg180, 0)
+
+    # 通常価格 = 90日平均と180日平均の高い方（より保守的な見積もり）
+    regular_price = max(avg90_price, avg180_price)
+
+    if not current_price or current_price <= 0:
+        print(f"[KEEPA_DEALS] スキップ（現在価格なし）: {asin}", flush=True)
+        return None
+    if not regular_price or regular_price <= current_price:
+        print(f"[KEEPA_DEALS] スキップ（通常価格≤現在価格）: {asin} 現在={current_price} 通常={regular_price}", flush=True)
+        return None
+
+    drop_rate = (regular_price - current_price) / regular_price * 100
+    sales_rank = deal.get("salesRank") or 0
+    root_category = deal.get("rootCategory") or 0
+
+    print(
+        f"[KEEPA_DEALS] '{title[:25]}' ASIN={asin} "
+        f"現在={current_price}円 通常={regular_price}円 "
+        f"値下がり={round(drop_rate, 1)}% ランク={sales_rank}位",
+        flush=True,
+    )
+
+    return {
+        "asin": asin,
+        "product_name": title,
+        "current_price": current_price,   # 仕入れ値（今すぐ買える価格）
+        "regular_price": regular_price,   # 通常価格（転売目標価格）
+        "price_drop_rate": round(drop_rate, 1),
+        "amazon_rank": sales_rank,
+        "root_category": root_category,
+    }
+
+
+def _get_price(price_array: list, index: int) -> int:
+    """価格配列からindex番目の価格を取得（JPY=直接の円単位）"""
+    if not price_array or len(price_array) <= index:
+        return 0
+    price = price_array[index]
+    if price and price > 0:
+        return int(price)
+    return 0
