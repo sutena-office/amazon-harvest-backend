@@ -22,12 +22,12 @@ def get_keepa_deals(
         print("[KEEPA_DEALS] APIキー未設定", flush=True)
         return []
 
-    url = "https://api.keepa.com/deals"
+    url = "https://api.keepa.com/deal"
     params = {
         "key": KEEPA_API_KEY,
         "domainId": 5,          # amazon.co.jp
         "page": page,
-        "priceTypes": "0",      # Amazon本体価格
+        "priceTypes": 0,        # Amazon本体価格
         "deltaPercent": int(-abs(min_drop_percent)),  # 負の値=値下がり率
         "dateRange": date_range,
     }
