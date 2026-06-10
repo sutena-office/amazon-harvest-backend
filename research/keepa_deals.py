@@ -69,29 +69,27 @@ def parse_deal(deal: dict) -> Optional[dict]:
 
     title = (deal.get("title") or "").strip()
 
-    # 現在価格（値下がり後）
+    # 現在価格（values[0]=Amazon本体価格、-1/-2はデータなし）
     current = deal.get("current") or []
     current_price = _get_price(current, 0)
 
-    # 通常価格の推定: 90日平均 > 180日平均 の順で参照
-    avg90 = deal.get("avg90") or []
-    avg180 = deal.get("avg180") or []
-    avg90_price = _get_price(avg90, 0)
-    avg180_price = _get_price(avg180, 0)
+    # avg は [30日平均配列, 90日平均配列, 180日平均配列] の構造
+    avg = deal.get("avg") or []
+    avg90_price = _get_price(avg[1], 0) if len(avg) > 1 else 0
+    avg180_price = _get_price(avg[2], 0) if len(avg) > 2 else 0
 
-    # 通常価格 = 90日平均と180日平均の高い方（より保守的な見積もり）
+    # 通常価格 = 90日平均と180日平均の高い方
     regular_price = max(avg90_price, avg180_price)
 
     if not current_price or current_price <= 0:
-        print(f"[KEEPA_DEALS] スキップ（現在価格なし）: {asin}", flush=True)
         return None
     if not regular_price or regular_price <= current_price:
-        print(f"[KEEPA_DEALS] スキップ（通常価格≤現在価格）: {asin} 現在={current_price} 通常={regular_price}", flush=True)
         return None
 
     drop_rate = (regular_price - current_price) / regular_price * 100
-    sales_rank = deal.get("salesRank") or 0
-    root_category = deal.get("rootCategory") or 0
+    # current[3] = 販売ランク（Keepa CSV index 3）
+    sales_rank = _get_price(current, 3)
+    root_category = deal.get("rootCat") or 0
 
     print(
         f"[KEEPA_DEALS] '{title[:25]}' ASIN={asin} "
