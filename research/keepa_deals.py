@@ -22,17 +22,23 @@ def get_keepa_deals(
         print("[KEEPA_DEALS] APIキー未設定", flush=True)
         return []
 
+    import json
     url = "https://api.keepa.com/deal"
-    params = {
-        "key": KEEPA_API_KEY,
-        "domainId": 5,          # amazon.co.jp
+
+    query = {
+        "domainId": 5,
         "page": page,
-        "priceTypes": 0,        # Amazon本体価格
-        "deltaPercent": int(-abs(min_drop_percent)),  # 負の値=値下がり率
+        "priceTypes": [0],
+        "deltaPercent": int(-abs(min_drop_percent)),
         "dateRange": date_range,
     }
     if max_rank > 0:
-        params["salesRankRange"] = f"1,{max_rank}"
+        query["salesRankRange"] = {"min": 1, "max": max_rank}
+
+    params = {
+        "key": KEEPA_API_KEY,
+        "queryJSON": json.dumps(query),
+    }
 
     try:
         response = requests.get(url, params=params, timeout=30)
