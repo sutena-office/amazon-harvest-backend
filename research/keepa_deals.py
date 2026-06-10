@@ -22,7 +22,6 @@ def get_keepa_deals(
         print("[KEEPA_DEALS] APIキー未設定", flush=True)
         return []
 
-    import json
     url = "https://api.keepa.com/deal"
 
     query = {
@@ -35,13 +34,8 @@ def get_keepa_deals(
     if max_rank > 0:
         query["salesRankRange"] = {"min": 1, "max": max_rank}
 
-    params = {
-        "key": KEEPA_API_KEY,
-        "queryJSON": json.dumps(query),
-    }
-
     try:
-        response = requests.get(url, params=params, timeout=30)
+        response = requests.post(url, params={"key": KEEPA_API_KEY}, json=query, timeout=30)
         print(f"[KEEPA_DEALS] status={response.status_code}", flush=True)
 
         if response.status_code != 200:
