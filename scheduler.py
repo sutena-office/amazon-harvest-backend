@@ -104,12 +104,14 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None):
 
             # 直近12時間で同一ASINが既に保存済みなら重複スキップ
             try:
+                from datetime import datetime, timezone, timedelta
+                cutoff = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
                 existing = (
                     supabase.table("harvest_results")
                     .select("id")
                     .eq("user_id", user_id)
                     .eq("amazon_asin", deal["asin"])
-                    .gte("found_at", "now() - interval '12 hours'")
+                    .gte("found_at", cutoff)
                     .execute()
                 )
                 if not existing.data:
