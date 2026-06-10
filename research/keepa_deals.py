@@ -69,16 +69,25 @@ def parse_deal(deal: dict) -> Optional[dict]:
 
     title = (deal.get("title") or "").strip()
 
-    # 現在価格（values[0]=Amazon本体価格、-1/-2はデータなし）
     current = deal.get("current") or []
-    current_price = _get_price(current, 0)
-
-    # avg は [30日平均配列, 90日平均配列, 180日平均配列] の構造
     avg = deal.get("avg") or []
-    avg90_price = _get_price(avg[1], 0) if len(avg) > 1 else 0
-    avg180_price = _get_price(avg[2], 0) if len(avg) > 2 else 0
 
-    # 通常価格 = 90日平均と180日平均の高い方
+    # 現在価格: Amazon(0) → BuyBox(18) → New市場(1) の順で優先
+    current_price = (_get_price(current, 0)
+                     or _get_price(current, 18)
+                     or _get_price(current, 1))
+
+    # 通常価格（90日/180日平均）: Amazon(0) → BuyBox(18) → New市場(1) の順で優先
+    def _avg_price(day_idx: int) -> int:
+        if len(avg) <= day_idx:
+            return 0
+        arr = avg[day_idx]
+        return (_get_price(arr, 0)
+                or _get_price(arr, 18)
+                or _get_price(arr, 1))
+
+    avg90_price = _avg_price(1)
+    avg180_price = _avg_price(2)
     regular_price = max(avg90_price, avg180_price)
 
     if not current_price or current_price <= 0:
