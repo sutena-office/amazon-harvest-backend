@@ -32,11 +32,19 @@ def run_harvest_for_all_users():
         min_drop = min(s.get("min_drop_rate", 20) for s in users)
         max_rank = max(s.get("max_rank", 100000) for s in users)
 
-        raw_deals = get_keepa_deals(
-            min_drop_percent=min_drop,
-            max_rank=max_rank,
-            date_range=1,  # 直近24時間（5分ごとのため短くする）
-        )
+        # 複数ページ × 直近1週間で取得（トークン節約のため最大3ページ）
+        raw_deals = []
+        for page in range(3):
+            page_deals = get_keepa_deals(
+                min_drop_percent=min_drop,
+                max_rank=max_rank,
+                date_range=3,
+                page=page,
+            )
+            if not page_deals:
+                break
+            raw_deals.extend(page_deals)
+        print(f"[HARVEST] Keepa取得合計: {len(raw_deals)}件", flush=True)
 
         parsed = [parse_deal(d) for d in raw_deals]
         parsed = [p for p in parsed if p is not None]
@@ -63,11 +71,17 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None):
     print(f"[HARVEST] ユーザー処理開始 user_id={user_id}", flush=True)
 
     if parsed_deals is None:
-        raw_deals = get_keepa_deals(
-            min_drop_percent=min_drop_rate,
-            max_rank=max_rank,
-            date_range=1,
-        )
+        raw_deals = []
+        for page in range(3):
+            page_deals = get_keepa_deals(
+                min_drop_percent=min_drop_rate,
+                max_rank=max_rank,
+                date_range=3,
+                page=page,
+            )
+            if not page_deals:
+                break
+            raw_deals.extend(page_deals)
         parsed_deals = [parse_deal(d) for d in raw_deals]
         parsed_deals = [p for p in parsed_deals if p is not None]
 
