@@ -27,7 +27,7 @@ def get_keepa_deals(
     query = {
         "domainId": 5,
         "page": page,
-        "priceTypes": [0],
+        "priceTypes": [0, 18, 1],   # Amazon直販・BuyBox・新品出品
         "deltaPercent": int(-abs(min_drop_percent)),
         "dateRange": date_range,
     }
