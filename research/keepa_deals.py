@@ -31,8 +31,6 @@ def get_keepa_deals(
         "deltaPercent": int(-abs(min_drop_percent)),
         "dateRange": date_range,
     }
-    if max_rank > 0:
-        query["salesRankRange"] = {"min": 1, "max": max_rank}
 
     try:
         response = requests.post(url, params={"key": KEEPA_API_KEY}, json=query, timeout=30)
