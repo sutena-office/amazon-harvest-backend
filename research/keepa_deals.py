@@ -27,7 +27,7 @@ def get_keepa_deals(
     query = {
         "domainId": 5,
         "page": page,
-        "priceTypes": [0, 18, 1],   # Amazon直販・BuyBox・新品出品
+        "priceTypes": [18],   # BuyBox（Amazon直販含む全出品者）
         "deltaPercent": int(-abs(min_drop_percent)),
         "dateRange": date_range,
     }
@@ -72,18 +72,18 @@ def parse_deal(deal: dict) -> Optional[dict]:
     current = deal.get("current") or []
     avg = deal.get("avg") or []
 
-    # 現在価格: Amazon(0) → BuyBox(18) → New市場(1) の順で優先
-    current_price = (_get_price(current, 0)
-                     or _get_price(current, 18)
+    # 現在価格: BuyBox(18) → Amazon直販(0) → New市場(1) の順で優先
+    current_price = (_get_price(current, 18)
+                     or _get_price(current, 0)
                      or _get_price(current, 1))
 
-    # 通常価格（90日/180日平均）: Amazon(0) → BuyBox(18) → New市場(1) の順で優先
+    # 通常価格（90日/180日平均）: BuyBox(18) → Amazon直販(0) → New市場(1) の順で優先
     def _avg_price(day_idx: int) -> int:
         if len(avg) <= day_idx:
             return 0
         arr = avg[day_idx]
-        return (_get_price(arr, 0)
-                or _get_price(arr, 18)
+        return (_get_price(arr, 18)
+                or _get_price(arr, 0)
                 or _get_price(arr, 1))
 
     avg90_price = _avg_price(1)
