@@ -114,7 +114,8 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None, health_cache:
     for deal in parsed_deals:
         if deal["price_drop_rate"] < min_drop_rate:
             continue
-        if max_rank > 0 and deal["amazon_rank"] > max_rank:
+        # ランクが0（取得不可）またはmax_rankを超える商品は除外
+        if max_rank > 0 and (deal["amazon_rank"] == 0 or deal["amazon_rank"] > max_rank):
             continue
         # 仕入れ値が通常価格の77%以下でなければスキップ（経費18%+利益5%の最低ライン）
         if deal["current_price"] > 0.77 * deal["regular_price"]:
