@@ -24,8 +24,8 @@ def check_seller_health(asin: str, root_category: int = 0) -> dict:
     Keepa Product APIでセラー健全性を4条件チェックする。
     - 過去90日 平均出品者数 ≥ 3名
     - 直近30日 出品者数の急減が50%未満
-    - Amazon独占疑いなし（出品者5名未満 + Amazon常時販売は除外）
     - 売れ筋ランキング カテゴリ上位3%以内
+    ※ Amazon本体が販売中でも除外しない（価格が戻れば一般セラーにもチャンスあり）
 
     Returns: {"healthy": bool, "reason": str, ...stats}
     """
@@ -70,14 +70,7 @@ def check_seller_health(asin: str, root_category: int = 0) -> dict:
             print(f"[HEALTH] {asin} NG: 出品者急減({seller_90}→{seller_30}人)", flush=True)
             return {"healthy": False, "reason": f"出品者急減({seller_90}→{seller_30}人)"}
 
-        # ③ Amazon独占疑い排除
-        # Amazon価格が90日間有効 かつ 出品者が5人未満 = 一般セラーがカートを取れない可能性大
-        amazon_price_90 = _val(avg90, 0)
-        if amazon_price_90 > 0 and seller_90 < 5:
-            print(f"[HEALTH] {asin} NG: Amazon独占疑い(出品者{seller_90}人)", flush=True)
-            return {"healthy": False, "reason": f"Amazon独占疑い(出品者{seller_90}人)"}
-
-        # ④ 売れ筋ランキング カテゴリ上位3%以内 (CSV index 3 = Sales Rank)
+        # ③ 売れ筋ランキング カテゴリ上位3%以内 (CSV index 3 = Sales Rank)
         rank_90 = _val(avg90, 3)
         if rank_90 > 0:
             cat_size = CATEGORY_SIZES.get(root_category, 1000000)
