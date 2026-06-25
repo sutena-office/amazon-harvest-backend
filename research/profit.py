@@ -1,4 +1,4 @@
-DEFAULT_AMAZON_FEE_RATE = 15.4  # Amazon手数料（%）
+DEFAULT_AMAZON_FEE_RATE = 18.0  # Amazon手数料＋送料込み経費（%）
 
 
 def calculate_profit(

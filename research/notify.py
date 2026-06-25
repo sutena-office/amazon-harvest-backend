@@ -29,6 +29,9 @@ def send_discord_notification(webhook_url: str, deals: list):
         # 利益率で色を変える
         color = 0x00C851 if profit_rate >= 20 else 0xFF8800 if profit_rate >= 15 else 0xFFCC00
 
+        expense = int(sell * 0.18)
+        keepa_url = f"https://keepa.com/#!product/5-{asin}" if asin else ""
+
         embed = {
             "title": f"🔥 {name}",
             "url": f"https://www.amazon.co.jp/dp/{asin}",
@@ -39,10 +42,13 @@ def send_discord_notification(webhook_url: str, deals: list):
                 {"name": "📉 値下がり率", "value": f"**{drop}%OFF**", "inline": True},
                 {"name": "📈 予想利益額", "value": f"**¥{profit:,}**", "inline": True},
                 {"name": "📊 利益率", "value": f"**{profit_rate}%**", "inline": True},
+                {"name": "💸 想定経費（18%）", "value": f"¥{expense:,}", "inline": True},
                 {"name": "🏆 ランキング", "value": f"{rank:,}位", "inline": True},
+                {"name": "📉 Keepaグラフ", "value": f"[価格推移を確認]({keepa_url})", "inline": True},
+                {"name": "🔢 ASIN", "value": f"`{asin}`", "inline": True},
             ],
             "footer": {
-                "text": "Amazon刈り取りモニター | Keepa連携",
+                "text": "Amazon刈り取りモニター | 経費18%・利益率5%以上",
             },
         }
 
@@ -95,10 +101,14 @@ def _format_line_message(deals: list) -> str:
     msg = f"🔥【刈り取り発見！】{len(deals)}件\n\n"
     for d in deals[:3]:
         asin = d.get("amazon_asin") or d.get("asin", "")
+        expense = int(d['regular_price'] * 0.18)
         msg += f"▼ {d['product_name'][:22]}\n"
+        msg += f"ASIN: {asin}\n"
         msg += f"仕入: ¥{d['current_price']:,} / 転売: ¥{d['regular_price']:,}\n"
+        msg += f"経費(18%): ¥{expense:,}\n"
         msg += f"値下がり: {d['price_drop_rate']}%  利益: ¥{d['profit_amount']:,}（{d['profit_rate']}%）\n"
-        msg += f"👉 https://www.amazon.co.jp/dp/{asin}\n\n"
+        msg += f"🛒 https://www.amazon.co.jp/dp/{asin}\n"
+        msg += f"📉 https://keepa.com/#!product/5-{asin}\n\n"
     if len(deals) > 3:
         msg += f"他 {len(deals) - 3}件はアプリでご確認ください。"
     return msg.strip()

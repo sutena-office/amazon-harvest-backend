@@ -8,11 +8,11 @@ from research.notify import notify_all
 logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS = {
-    "min_profit_rate": 15,
+    "min_profit_rate": 5,
     "min_profit_amount": 500,
-    "min_drop_rate": 20,
+    "min_drop_rate": 23,
     "max_rank": 100000,
-    "amazon_fee_rate": 15.4,
+    "amazon_fee_rate": 18.0,
     "notify_enabled": False,
     "line_user_id": None,
     "discord_webhook_url": None,
@@ -91,6 +91,9 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None):
         if deal["price_drop_rate"] < min_drop_rate:
             continue
         if max_rank > 0 and deal["amazon_rank"] > max_rank:
+            continue
+        # 仕入れ値が通常価格の77%以下でなければスキップ（経費18%+利益5%の最低ライン）
+        if deal["current_price"] > 0.77 * deal["regular_price"]:
             continue
 
         profit_result = calculate_profit(
