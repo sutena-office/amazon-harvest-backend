@@ -31,6 +31,8 @@ def send_discord_notification(webhook_url: str, deals: list):
 
         expense = int(sell * 0.18)
         keepa_url = f"https://keepa.com/#!product/5-{asin}" if asin else ""
+        seller_count = deal.get("seller_count", 0)
+        seller_label = f"{seller_count}人" if seller_count else "確認済"
 
         embed = {
             "title": f"🔥 {name}",
@@ -44,11 +46,12 @@ def send_discord_notification(webhook_url: str, deals: list):
                 {"name": "📊 利益率", "value": f"**{profit_rate}%**", "inline": True},
                 {"name": "💸 想定経費（18%）", "value": f"¥{expense:,}", "inline": True},
                 {"name": "🏆 ランキング", "value": f"{rank:,}位", "inline": True},
+                {"name": "👥 出品者数(90日avg)", "value": seller_label, "inline": True},
                 {"name": "📉 Keepaグラフ", "value": f"[価格推移を確認]({keepa_url})", "inline": True},
                 {"name": "🔢 ASIN", "value": f"`{asin}`", "inline": True},
             ],
             "footer": {
-                "text": "Amazon刈り取りモニター | 経費18%・利益率5%以上",
+                "text": "Amazon刈り取りモニター | 経費18%・セラー健全性確認済",
             },
         }
 
