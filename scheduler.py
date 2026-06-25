@@ -12,6 +12,7 @@ DEFAULT_SETTINGS = {
     "min_profit_rate": 5,
     "min_profit_amount": 500,
     "min_drop_rate": 23,
+    "min_rank": 1,
     "max_rank": 100000,
     "amazon_fee_rate": 18.0,
     "notify_enabled": False,
@@ -76,6 +77,7 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None, health_cache:
     min_profit_rate = setting.get("min_profit_rate", DEFAULT_SETTINGS["min_profit_rate"])
     min_profit_amount = setting.get("min_profit_amount", DEFAULT_SETTINGS["min_profit_amount"])
     min_drop_rate = setting.get("min_drop_rate", DEFAULT_SETTINGS["min_drop_rate"])
+    min_rank = setting.get("min_rank", DEFAULT_SETTINGS["min_rank"])
     max_rank = setting.get("max_rank", DEFAULT_SETTINGS["max_rank"])
     amazon_fee_rate = setting.get("amazon_fee_rate", DEFAULT_SETTINGS["amazon_fee_rate"])
 
@@ -114,8 +116,13 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None, health_cache:
     for deal in parsed_deals:
         if deal["price_drop_rate"] < min_drop_rate:
             continue
-        # ランクが0（取得不可）またはmax_rankを超える商品は除外
-        if max_rank > 0 and (deal["amazon_rank"] == 0 or deal["amazon_rank"] > max_rank):
+        # ランクが0（取得不可）またはmin_rank〜max_rankの範囲外は除外
+        rank = deal["amazon_rank"]
+        if rank == 0:
+            continue
+        if min_rank > 1 and rank < min_rank:
+            continue
+        if max_rank > 0 and rank > max_rank:
             continue
         # 仕入れ値が通常価格の77%以下でなければスキップ（経費18%+利益5%の最低ライン）
         if deal["current_price"] > 0.77 * deal["regular_price"]:

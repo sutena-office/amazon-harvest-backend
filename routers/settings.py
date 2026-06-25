@@ -10,6 +10,7 @@ DEFAULT_SETTINGS = {
     "min_profit_rate": 15,
     "min_profit_amount": 500,
     "min_drop_rate": 20,
+    "min_rank": 1,
     "max_rank": 100000,
     "amazon_fee_rate": 15.4,
     "line_user_id": "",
@@ -22,6 +23,7 @@ class SettingsUpdate(BaseModel):
     min_profit_rate: Optional[int] = None
     min_profit_amount: Optional[int] = None
     min_drop_rate: Optional[float] = None
+    min_rank: Optional[int] = None
     max_rank: Optional[int] = None
     amazon_fee_rate: Optional[float] = None
     line_user_id: Optional[str] = None
