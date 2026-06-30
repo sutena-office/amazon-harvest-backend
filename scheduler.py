@@ -103,11 +103,7 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None, health_cache:
         if max_rank > 0 and rank > max_rank:
             continue
 
-        # ③ 価格比フィルター（P_buy ≤ 0.77 × P_sell = 経費18%+利益5%の最低ライン）
-        if deal["current_price"] > 0.77 * deal["regular_price"]:
-            continue
-
-        # ④ 利益計算フィルター
+        # ③ 利益計算・利益フィルター
         profit_result = calculate_profit(
             buy_price=deal["current_price"],
             sell_price=deal["regular_price"],
@@ -119,7 +115,7 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None, health_cache:
         ):
             continue
 
-        # ⑤ セラー健全性チェック（①〜④通過後のみ実行してトークン節約）
+        # ④ セラー健全性チェック（①〜③通過後のみ実行してトークン節約）
         asin = deal["asin"]
         if asin not in health_cache:
             health_cache[asin] = check_seller_health(asin, deal.get("root_category", 0))
