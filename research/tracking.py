@@ -45,11 +45,11 @@ def add_trackers(items: list) -> dict:
     for item in items:
         tracking_objects.append({
             "asin": item["asin"],
-            "ttl": 0,                     # 無期限
-            "expireIn": 0,
+            "ttl": 525600,                # 1年間監視（分単位）
+            "expireNotify": False,
+            "mainDomainId": 5,            # amazon.co.jp
             "updateInterval": 1,          # 最短間隔で監視
             "metaData": "amazon-harvest",
-            "desiredPricesInMainCurrency": True,
             "thresholdValues": [
                 {
                     "thresholdValue": int(item["target_price"]),
@@ -58,8 +58,9 @@ def add_trackers(items: list) -> dict:
                     "isDrop": True,       # 下回ったら通知
                 }
             ],
-            # 通知チャネル: index 6 = API(Webhook) のみON
-            "notificationType": [False, False, False, False, False, False, True],
+            # 通知チャネル: [EMAIL, TWITTER, FB通知, BROWSER, FBメッセンジャー, API, モバイル, DUMMY]
+            # index 5 = API(Webhook) のみON
+            "notificationType": [False, False, False, False, False, True, False, False],
             "individualNotificationInterval": -1,
         })
 

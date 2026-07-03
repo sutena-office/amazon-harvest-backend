@@ -127,6 +127,22 @@ async def import_csv(payload: CsvImport, current_user=Depends(get_current_user))
     return {"started": True, "job_id": job_id, "total": len(asins)}
 
 
+@router.post("/register")
+async def register(current_user=Depends(get_current_user)):
+    """承認済みASINのトラッカー登録を（再）実行する"""
+    try:
+        from research.tracking import register_trackers_for_user
+        result = register_trackers_for_user(current_user.id)
+        return {
+            "ok": True,
+            "registered": result.get("registered", 0),
+            "total": result.get("total", 0),
+        }
+    except Exception as e:
+        print(f"[POOL] トラッカー登録エラー: {e}", flush=True)
+        return {"ok": False, "message": str(e)[:200]}
+
+
 @router.get("/status")
 async def status(current_user=Depends(get_current_user)):
     """最新の審査ジョブとプール統計"""
