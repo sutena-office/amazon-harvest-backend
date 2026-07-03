@@ -154,24 +154,26 @@ async def status(current_user=Depends(get_current_user)):
         .limit(1)
         .execute()
     )
-    counts = (
+    # count="exact"はライブラリ/環境差で信頼できないケースがあるため、
+    # 実データを取得してPython側で件数を数える確実な方式にする
+    tracking_res = (
         supabase.table("watch_list")
-        .select("status", count="exact")
+        .select("id")
         .eq("user_id", current_user.id)
         .eq("status", "tracking")
         .execute()
     )
-    approved = (
+    approved_res = (
         supabase.table("watch_list")
-        .select("status", count="exact")
+        .select("id")
         .eq("user_id", current_user.id)
         .eq("status", "approved")
         .execute()
     )
     return {
         "job": job_res.data[0] if job_res.data else None,
-        "tracking_count": counts.count or 0,
-        "approved_count": approved.count or 0,
+        "tracking_count": len(tracking_res.data or []),
+        "approved_count": len(approved_res.data or []),
     }
 
 
