@@ -42,28 +42,32 @@ async def preview(criteria: PoolCriteria, current_user=Depends(get_current_user)
 @router.post("/build")
 async def build(criteria: PoolCriteria, current_user=Depends(get_current_user)):
     """プール構築を開始：ASIN取得→夜間審査バッチをバックグラウンドで起動"""
-    # 実行中ジョブがあれば拒否
-    running = (
-        supabase.table("pool_jobs")
-        .select("id")
-        .eq("user_id", current_user.id)
-        .eq("status", "running")
-        .execute()
-    )
-    if running.data:
-        return {"started": False, "message": "審査ジョブが既に実行中です"}
+    try:
+        # 実行中ジョブがあれば拒否
+        running = (
+            supabase.table("pool_jobs")
+            .select("id")
+            .eq("user_id", current_user.id)
+            .eq("status", "running")
+            .execute()
+        )
+        if running.data:
+            return {"started": False, "message": "審査ジョブが既に実行中です"}
 
-    result = find_pool_asins(criteria.model_dump())
-    asins = result.get("asins", [])
-    if not asins:
-        return {"started": False, "message": f"該当商品なし: {result.get('error', '')}"}
+        result = find_pool_asins(criteria.model_dump())
+        asins = result.get("asins", [])
+        if not asins:
+            return {"started": False, "message": f"該当商品なし: {result.get('error', '')}"}
 
-    job = (
-        supabase.table("pool_jobs")
-        .insert({"user_id": current_user.id, "status": "running", "total": len(asins)})
-        .execute()
-    )
-    job_id = job.data[0]["id"]
+        job = (
+            supabase.table("pool_jobs")
+            .insert({"user_id": current_user.id, "status": "running", "total": len(asins)})
+            .execute()
+        )
+        job_id = job.data[0]["id"]
+    except Exception as e:
+        print(f"[POOL] 構築開始エラー: {e}", flush=True)
+        return {"started": False, "message": f"エラー: {str(e)[:200]}"}
 
     merged = {**DEFAULT_CRITERIA, **{k: v for k, v in criteria.model_dump().items() if v is not None}}
 
@@ -92,22 +96,26 @@ async def import_csv(payload: CsvImport, current_user=Depends(get_current_user))
     if not asins:
         return {"started": False, "message": "有効なASINがありません"}
 
-    running = (
-        supabase.table("pool_jobs")
-        .select("id")
-        .eq("user_id", current_user.id)
-        .eq("status", "running")
-        .execute()
-    )
-    if running.data:
-        return {"started": False, "message": "審査ジョブが既に実行中です"}
+    try:
+        running = (
+            supabase.table("pool_jobs")
+            .select("id")
+            .eq("user_id", current_user.id)
+            .eq("status", "running")
+            .execute()
+        )
+        if running.data:
+            return {"started": False, "message": "審査ジョブが既に実行中です"}
 
-    job = (
-        supabase.table("pool_jobs")
-        .insert({"user_id": current_user.id, "status": "running", "total": len(asins)})
-        .execute()
-    )
-    job_id = job.data[0]["id"]
+        job = (
+            supabase.table("pool_jobs")
+            .insert({"user_id": current_user.id, "status": "running", "total": len(asins)})
+            .execute()
+        )
+        job_id = job.data[0]["id"]
+    except Exception as e:
+        print(f"[POOL] CSVインポートエラー: {e}", flush=True)
+        return {"started": False, "message": f"エラー: {str(e)[:200]}"}
 
     from research.screening import run_screening_job
     thread = threading.Thread(
