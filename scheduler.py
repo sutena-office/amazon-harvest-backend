@@ -166,6 +166,8 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None, health_cache:
 
 def start_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(run_harvest_for_all_users, "interval", minutes=5)
+    # メイン監視はKeepaトラッカー(Webhookプッシュ)に移行済み。
+    # Deals APIは「プール外の新規発掘」用として60分間隔に格下げしトークンを温存する
+    scheduler.add_job(run_harvest_for_all_users, "interval", minutes=60)
     scheduler.start()
-    logger.info("Harvest Scheduler started - 5分ごとに実行")
+    logger.info("Harvest Scheduler started - 60分ごとに実行（メイン監視はWebhook）")
