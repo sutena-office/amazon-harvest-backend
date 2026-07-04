@@ -10,10 +10,14 @@ import statistics
 import requests
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-from database import supabase
+from database import get_client
 
 load_dotenv()
 KEEPA_API_KEY = os.getenv("KEEPA_API_KEY")
+
+# APIリクエスト処理用の共有クライアントとは別に、この長時間バックグラウンド
+# 処理専用のクライアントを持つ（互いの負荷が干渉しないようにするため）
+supabase = get_client()
 
 KEEPA_TIME_OFFSET = 21564000  # Keepa分 = unix分 - 21564000
 PACE_SECONDS = 13             # 5トークン/分プランで枯渇しないペース

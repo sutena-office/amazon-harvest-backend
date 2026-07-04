@@ -7,11 +7,14 @@ watch_listの合格ASINにトラッカーを登録すると、目標価格（中
 import os
 import requests
 from dotenv import load_dotenv
-from database import supabase
+from database import get_client
 
 load_dotenv()
 KEEPA_API_KEY = os.getenv("KEEPA_API_KEY")
 BACKEND_URL = os.getenv("BACKEND_URL", "https://amazon-harvest-backend.onrender.com")
+
+# 審査バックグラウンドスレッドからも呼ばれるため、専用クライアントを使う
+supabase = get_client()
 
 BATCH_SIZE = 100  # 一括登録の単位
 
