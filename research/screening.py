@@ -122,12 +122,34 @@ def screen_asin(asin: str, criteria: dict) -> dict:
 
 
 def run_screening_job(job_id: str, user_id: str, asins: list, criteria: dict):
-    """審査バッチ本体（バックグラウンドスレッドで実行）"""
-    print(f"[SCREEN] 審査開始 job={job_id} 対象={len(asins)}件", flush=True)
-    approved = 0
-    screened = 0
+    """
+    審査バッチ本体（バックグラウンドスレッドで実行）。
+    Render Freeはバックグラウンドスレッドが予告なく落ちることがあるため、
+    既に審査済み(watch_listに存在する)ASINは事前に除外し、
+    同じ条件で再度「プール構築」を押すだけで続きから再開できるようにする。
+    """
+    existing_res = supabase.table("watch_list").select("asin").eq("user_id", user_id).execute()
+    already_known = {r["asin"] for r in (existing_res.data or [])}
+    remaining = [a for a in asins if a not in already_known]
 
-    for asin in asins:
+    approved = len(already_known)  # 既存分を合格数の初期値にする
+    screened = len(asins) - len(remaining)  # 既存分は審査済み扱い
+
+    print(
+        f"[SCREEN] 審査開始 job={job_id} 対象={len(asins)}件 "
+        f"（既存{len(already_known)}件はスキップ、残り{len(remaining)}件を審査）",
+        flush=True,
+    )
+
+    if screened:
+        try:
+            supabase.table("pool_jobs").update(
+                {"screened": screened, "approved": approved}
+            ).eq("id", job_id).execute()
+        except Exception:
+            pass
+
+    for asin in remaining:
         result = screen_asin(asin, criteria)
 
         if result.get("retry"):
