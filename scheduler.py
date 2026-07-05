@@ -167,7 +167,9 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None, health_cache:
 def start_scheduler():
     scheduler = BackgroundScheduler()
     # メイン監視はKeepaトラッカー(Webhookプッシュ)に移行済み。
-    # Deals APIは「プール外の新規発掘」用として60分間隔に格下げしトークンを温存する
-    scheduler.add_job(run_harvest_for_all_users, "interval", minutes=60)
+    # Deals APIは「プール外の新規発掘」用だが、セラー健全性チェックが
+    # 1回のスキャンで大量にトークンを消費し、監視プールの初回審査バッチと
+    # トークンを奪い合ってしまうため、一旦12時間間隔まで下げてプール構築を優先する。
+    scheduler.add_job(run_harvest_for_all_users, "interval", hours=12)
     scheduler.start()
-    logger.info("Harvest Scheduler started - 60分ごとに実行（メイン監視はWebhook）")
+    logger.info("Harvest Scheduler started - 12時間ごとに実行（プール構築優先のため一時的に間隔を延長）")
