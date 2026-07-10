@@ -62,8 +62,17 @@ def find_pool_asins(criteria: dict) -> dict:
         "perPage": 10000,
         "page": 0,
     }
+
+    exclude_categories = {int(x) for x in (c.get("exclude_categories") or [])}
     if c.get("categories"):
-        selection["rootCategory"] = [int(x) for x in c["categories"]]
+        include = [int(x) for x in c["categories"] if int(x) not in exclude_categories]
+        selection["rootCategory"] = include
+    elif exclude_categories:
+        # 除外指定のみの場合は「全カテゴリ - 除外分」を明示的な含有リストにする
+        all_cats = get_root_categories()
+        selection["rootCategory"] = [
+            cat["id"] for cat in all_cats if cat["id"] not in exclude_categories
+        ]
 
     url = "https://api.keepa.com/query"
     try:

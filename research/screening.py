@@ -23,6 +23,28 @@ KEEPA_TIME_OFFSET = 21564000  # Keepa分 = unix分 - 21564000
 PACE_SECONDS = 13             # 5トークン/分プランで枯渇しないペース
 TARGET_RATIO = 0.77           # 仕入れ目標価格 = 中央値 × 0.77（経費18%+利益5%）
 
+# 目利きできない商材（輸入品・音楽系）を除外するためのキーワード/カテゴリ
+IMPORT_KEYWORDS = [
+    "輸入盤", "直輸入", "並行輸入", "海外盤", "北米版", "輸入版",
+    "海外正規品", "import", "洋楽", "韓国盤", "台湾盤",
+]
+MUSIC_CATEGORY_NAMES = {"ミュージック", "デジタルミュージック"}
+
+
+def _is_import_or_music(title: str, root_category: int) -> bool:
+    lower_title = title.lower()
+    if any(kw.lower() in lower_title for kw in IMPORT_KEYWORDS):
+        return True
+    try:
+        from research.keepa_pool import get_root_categories
+        cats = get_root_categories()
+        name = next((c["name"] for c in cats if c["id"] == root_category), "")
+        if name in MUSIC_CATEGORY_NAMES:
+            return True
+    except Exception:
+        pass
+    return False
+
 
 def _keepa_minutes_ago(days: int) -> int:
     unix_min = int(datetime.now(timezone.utc).timestamp() / 60)
@@ -79,6 +101,10 @@ def screen_asin(asin: str, criteria: dict) -> dict:
 
         p = products[0]
         title = (p.get("title") or "").strip()
+
+        if _is_import_or_music(title, p.get("rootCategory") or 0):
+            return {"ok": False, "reason": "輸入品/音楽系のため除外"}
+
         csv = p.get("csv") or []
         stats = p.get("stats") or {}
         avg90 = stats.get("avg90") or []

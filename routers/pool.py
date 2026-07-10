@@ -15,6 +15,7 @@ class PoolCriteria(BaseModel):
     min_sellers: Optional[int] = None
     max_rank: Optional[int] = None
     categories: Optional[List[int]] = None
+    exclude_categories: Optional[List[int]] = None
 
 
 class CsvImport(BaseModel):
@@ -175,6 +176,32 @@ async def status(current_user=Depends(get_current_user)):
         "tracking_count": len(tracking_res.data or []),
         "approved_count": len(approved_res.data or []),
     }
+
+
+@router.post("/prune")
+async def prune(current_user=Depends(get_current_user)):
+    """登録済みプールから輸入品/音楽系に該当する商品をKeepaトラッカーごと除去する"""
+    from research.screening import _is_import_or_music
+    from research.tracking import remove_tracker
+
+    rows = (
+        supabase.table("watch_list")
+        .select("id, asin, product_name, root_category, status")
+        .eq("user_id", current_user.id)
+        .in_("status", ["approved", "tracking"])
+        .execute()
+    ).data or []
+
+    removed = []
+    for row in rows:
+        if _is_import_or_music(row.get("product_name") or "", row.get("root_category") or 0):
+            if row["status"] == "tracking":
+                remove_tracker(row["asin"])
+            supabase.table("watch_list").delete().eq("id", row["id"]).execute()
+            removed.append(row["asin"])
+
+    print(f"[POOL] 整理完了: {len(removed)}件を除外", flush=True)
+    return {"removed": len(removed), "checked": len(rows)}
 
 
 @router.get("/list")
