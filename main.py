@@ -35,8 +35,17 @@ def root():
 @app.get("/health")
 def health():
     """keep-alive用。cron-job.org等から10分ごとにpingすることで
-    Render Freeのスリープを防ぎ、スケジューラーとWebhook受信を常時稼働させる"""
-    return {"status": "ok"}
+    Render Freeのスリープを防ぎ、スケジューラーとWebhook受信を常時稼働させる。
+    DBに軽く触れることで、Supabase Free側の無操作による自動一時停止も防ぐ
+    （HTTPを叩くだけではRenderは起きてもSupabaseへのアクセスにはならないため）。"""
+    db_status = "unknown"
+    try:
+        from database import supabase
+        supabase.table("harvest_settings").select("user_id").limit(1).execute()
+        db_status = "ok"
+    except Exception as e:
+        db_status = f"error: {e}"
+    return {"status": "ok", "db": db_status}
 
 
 # ────────────────────────────────────────────────────────
