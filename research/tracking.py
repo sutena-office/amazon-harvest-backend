@@ -96,9 +96,27 @@ def remove_tracker(asin: str) -> bool:
         return False
 
 
+def remove_all_trackers() -> bool:
+    """アカウント上の全トラッカーを削除する。
+    トラッカー維持費(tokenFlowReduction)が補充レートを食い潰すと
+    上書き登録すら拒否されるため、設定変更時は一度全削除してから
+    登録し直す必要がある。"""
+    url = "https://api.keepa.com/tracking"
+    params = {"key": KEEPA_API_KEY, "type": "removeAll"}
+    try:
+        res = requests.get(url, params=params, timeout=30)
+        print(f"[TRACKING] 全削除 status={res.status_code} body={res.text[:200]}", flush=True)
+        return res.status_code == 200
+    except Exception as e:
+        print(f"[TRACKING] 全削除エラー: {e}", flush=True)
+        return False
+
+
 def register_trackers_for_user(user_id: str) -> dict:
-    """watch_listの承認済みASINをまとめてトラッカー登録し、statusをtrackingに更新"""
+    """watch_listの承認済みASINをまとめてトラッカー登録し、statusをtrackingに更新。
+    設定変更を確実に反映するため、毎回全削除→クリーンな状態から登録し直す。"""
     set_webhook_url()
+    remove_all_trackers()
 
     # approved(未登録)だけでなくtracking(登録済み)も対象に含める。
     # 同一ASINの再登録はKeepa側で上書きになるため、
