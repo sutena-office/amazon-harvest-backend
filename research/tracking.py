@@ -18,6 +18,12 @@ supabase = get_client()
 
 BATCH_SIZE = 100  # 一括登録の単位
 
+# トラッカーの更新間隔（時間）。
+# トラッカー維持はトークンフローを毎分削る（実測: 1件あたり毎時約0.5トークン）。
+# 1,000件×毎時更新 ≈ -8.3/分 となり5トークン/分プランでは恒常赤字になるため、
+# 4時間間隔（≈ -2.1/分）に抑えてプラン内で回るようにする。
+TRACKER_UPDATE_INTERVAL_HOURS = 4
+
 
 def set_webhook_url() -> bool:
     """KeepaアカウントのWebhook URLをこのアプリに設定する"""
@@ -51,7 +57,7 @@ def add_trackers(items: list) -> dict:
             "ttl": 525600,                # 1年間監視（分単位）
             "expireNotify": False,
             "mainDomainId": 5,            # amazon.co.jp
-            "updateInterval": 1,          # 最短間隔で監視
+            "updateInterval": TRACKER_UPDATE_INTERVAL_HOURS,
             "metaData": "amazon-harvest",
             "thresholdValues": [
                 {
@@ -94,11 +100,14 @@ def register_trackers_for_user(user_id: str) -> dict:
     """watch_listの承認済みASINをまとめてトラッカー登録し、statusをtrackingに更新"""
     set_webhook_url()
 
+    # approved(未登録)だけでなくtracking(登録済み)も対象に含める。
+    # 同一ASINの再登録はKeepa側で上書きになるため、
+    # updateInterval等の設定変更を既存トラッカーへ一括反映できる。
     res = (
         supabase.table("watch_list")
         .select("asin, target_price")
         .eq("user_id", user_id)
-        .eq("status", "approved")
+        .in_("status", ["approved", "tracking"])
         .execute()
     )
     rows = res.data or []
