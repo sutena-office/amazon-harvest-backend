@@ -121,11 +121,14 @@ def register_trackers_for_user(user_id: str) -> dict:
     # approved(未登録)だけでなくtracking(登録済み)も対象に含める。
     # 同一ASINの再登録はKeepa側で上書きになるため、
     # updateInterval等の設定変更を既存トラッカーへ一括反映できる。
+    # プランのトラッカー上限(実測約900件)を超えた分は登録できないため、
+    # 売れ筋ランキング上位から優先的に登録する。
     res = (
         supabase.table("watch_list")
-        .select("asin, target_price")
+        .select("asin, target_price, sales_rank")
         .eq("user_id", user_id)
         .in_("status", ["approved", "tracking"])
+        .order("sales_rank")
         .execute()
     )
     rows = res.data or []
