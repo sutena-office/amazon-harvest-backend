@@ -181,7 +181,7 @@ async def status(current_user=Depends(get_current_user)):
 @router.post("/prune")
 async def prune(current_user=Depends(get_current_user)):
     """登録済みプールから輸入品/音楽系に該当する商品をKeepaトラッカーごと除去する"""
-    from research.screening import _is_import_or_music
+    from research.screening import _is_excluded_product
     from research.tracking import remove_tracker
 
     rows = (
@@ -194,7 +194,7 @@ async def prune(current_user=Depends(get_current_user)):
 
     removed = []
     for row in rows:
-        if _is_import_or_music(row.get("product_name") or "", row.get("root_category") or 0):
+        if _is_excluded_product(row.get("product_name") or "", row.get("root_category") or 0):
             if row["status"] == "tracking":
                 remove_tracker(row["asin"])
             supabase.table("watch_list").delete().eq("id", row["id"]).execute()

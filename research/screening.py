@@ -23,17 +23,27 @@ KEEPA_TIME_OFFSET = 21564000  # Keepa分 = unix分 - 21564000
 PACE_SECONDS = 13             # 5トークン/分プランで枯渇しないペース
 TARGET_RATIO = 0.77           # 仕入れ目標価格 = 中央値 × 0.77（経費18%+利益5%）
 
-# 目利きできない商材（輸入品・音楽系）を除外するためのキーワード/カテゴリ
+# 取り扱わない商材を除外するためのキーワード/カテゴリ
+# ① 輸入品・音楽系（目利きできない）
 IMPORT_KEYWORDS = [
     "輸入盤", "直輸入", "並行輸入", "海外盤", "北米版", "輸入版",
     "海外正規品", "import", "洋楽", "韓国盤", "台湾盤",
 ]
+# ② AV・アダルト系（ブランドイメージ・規約リスク）
+# 注: 素の"AV"はAVアンプ/AVケーブル等の家電に誤爆するため使わない
+ADULT_KEYWORDS = [
+    "アダルト", "18禁", "R18", "R-18", "成人向け", "AV女優",
+    "官能", "風俗", "エロ", "セクシー女優", "イメージビデオ", "DMM.R18",
+]
 MUSIC_CATEGORY_NAMES = {"ミュージック", "デジタルミュージック"}
 
 
-def _is_import_or_music(title: str, root_category: int) -> bool:
+def _is_excluded_product(title: str, root_category: int) -> bool:
+    """輸入品・音楽系・アダルト系の除外判定"""
     lower_title = title.lower()
     if any(kw.lower() in lower_title for kw in IMPORT_KEYWORDS):
+        return True
+    if any(kw.lower() in lower_title for kw in ADULT_KEYWORDS):
         return True
     try:
         from research.keepa_pool import get_root_categories
@@ -41,9 +51,15 @@ def _is_import_or_music(title: str, root_category: int) -> bool:
         name = next((c["name"] for c in cats if c["id"] == root_category), "")
         if name in MUSIC_CATEGORY_NAMES:
             return True
+        if "アダルト" in name:
+            return True
     except Exception:
         pass
     return False
+
+
+# 旧名の互換エイリアス（routers/pool.py等からの参照用）
+_is_import_or_music = _is_excluded_product
 
 
 def _keepa_minutes_ago(days: int) -> int:
@@ -102,8 +118,8 @@ def screen_asin(asin: str, criteria: dict) -> dict:
         p = products[0]
         title = (p.get("title") or "").strip()
 
-        if _is_import_or_music(title, p.get("rootCategory") or 0):
-            return {"ok": False, "reason": "輸入品/音楽系のため除外"}
+        if _is_excluded_product(title, p.get("rootCategory") or 0):
+            return {"ok": False, "reason": "除外対象(輸入品/音楽/アダルト)"}
 
         csv = p.get("csv") or []
         stats = p.get("stats") or {}
