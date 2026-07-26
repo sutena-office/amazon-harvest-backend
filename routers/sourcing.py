@@ -149,8 +149,8 @@ async def list_candidates(current_user=Depends(get_current_user), limit: int = 1
 
 
 class RescanInput(BaseModel):
-    boost_percent: float | None = None  # 未指定なら今日の日付から自動判定
-    boost_cap: int | None = None
+    # auto=実行日の日付から判定 / normal / five_day / five_sun / matsuri
+    scenario: str = "auto"
 
 
 @router.get("/campaign")
@@ -179,7 +179,7 @@ async def export_csv(current_user=Depends(get_current_user), only_profitable: bo
         rows = [r for r in rows if (r.get("profit_amount") or 0) > 0]
 
     from research.yahoo_points import (
-        campaign_for_date, CAMPAIGN_CAP, UNCAPPED_RATE, ASSUMED_COUPON, TAX_RATE,
+        campaign_for_date, campaigns, active_campaign_keys, ASSUMED_COUPON, TAX_RATE,
     )
     from research.sourcing import (
         FEE_RATE, MAX_UNITS_PER_MONTH,
@@ -199,16 +199,24 @@ async def export_csv(current_user=Depends(get_current_user), only_profitable: bo
     # ── 条件ヘッダー（この数字がいつ・どんな前提で出たものかを明記する）──
     w.writerow(["■ Yahoo!仕入れ候補リスト"])
     w.writerow(["出力日時", now.strftime(f"%Y-%m-%d（{wd}） %H:%M") + " JST"])
-    w.writerow(["この日の還元条件", camp["summary"]])
-    w.writerow(["名目の総還元率", f'{camp["rate"]:g}%（上限に当たらない場合）'])
+    w.writerow(["名目の総還元率", f'{camp["rate"]:g}%（付与上限に当たらない場合）'])
     w.writerow(["ポイント算定の基準", f"税抜価格ベース（税込 ÷ {TAX_RATE}）"])
-    w.writerow(["キャンペーンの付与上限", f"合計 {CAMPAIGN_CAP:,}円"
-                f"（5のつく日は1,000pt=税抜25,000円で頭打ち等。高額品ほど実効還元率は下がる）"])
-    w.writerow(["上限なしの還元", f'{UNCAPPED_RATE:g}%（ストア独自ポイント＋PayPay基本付与）'])
     w.writerow(["想定クーポン", f"{ASSUMED_COUPON:,}円" if ASSUMED_COUPON else "見込まない（0円）"])
     w.writerow([])
+    w.writerow(["■ 適用キャンペーンと付与上限（上限はキャンペーンごとに個別適用）"])
+    w.writerow(["キャンペーン", "付与率", "付与上限", "上限到達の目安（税抜）"])
+    _defs = campaigns()
+    for _k in active_campaign_keys(now, camp["scenario"]):
+        _c = _defs[_k]
+        if _c["cap"] > 0:
+            _reach = f'{int(_c["cap"] / (_c["rate"] / 100)):,}円'
+            _cap = f'{_c["cap"]:,}pt'
+        else:
+            _reach, _cap = "—", "上限なし"
+        w.writerow([_c["label"], f'{_c["rate"]:g}%', _cap, _reach])
+    w.writerow([])
     w.writerow(["実質仕入れ値の計算式",
-                "（Yahoo!表示価格 − クーポン） −（支払額 ÷ 1.1 ×〔上限なし還元 ＋ min(上限あり還元, 付与上限)〕）"])
+                "（Yahoo!表示価格 − クーポン） − Σ min(各キャンペーンの還元額, そのキャンペーンの上限)"])
     w.writerow(["利益の計算式", f"Amazon売価 ×（1 − 経費{FEE_RATE*100:g}%）− 実質仕入れ値"])
     w.writerow(["月間利益の前提",
                 f"1商品あたり月{MAX_UNITS_PER_MONTH}個まで（週1回の仕入れ日に1個ずつ。"
@@ -266,21 +274,26 @@ async def export_csv(current_user=Depends(get_current_user), only_profitable: bo
 @router.post("/rescan")
 async def rescan(payload: RescanInput = None, current_user=Depends(get_current_user)):
     """Yahoo!側の価格・ポイントを再チェック（無料・トークン消費なし）。
-    boost未指定なら今日のキャンペーン（5のつく日・日曜・会員特典）を自動適用する"""
+    scenarioで「どの仕入れ日として計算するか」を切り替える。
+    各キャンペーンの付与上限が個別に適用される。"""
     from research.sourcing import rescan_yahoo_prices
-    boost = payload.boost_percent if payload else None
-    cap = payload.boost_cap if payload else None
+    from research.yahoo_points import campaign_for_date, SCENARIOS
+
+    scenario = (payload.scenario if payload else "auto") or "auto"
+    if scenario not in SCENARIOS:
+        return {"started": False, "message": f"不正な条件: {scenario}"}
+
+    camp = campaign_for_date(scenario=scenario)
     thread = threading.Thread(
         target=rescan_yahoo_prices,
-        args=(current_user.id, True, boost, cap),
+        args=(current_user.id, True, scenario),
         daemon=True,
     )
     thread.start()
-    if boost is None:
-        label = "（本日の還元を自動適用）"
-    else:
-        label = f"（想定 +{boost}%・上限¥{(cap or 0):,}）"
-    return {"started": True, "message": f"Yahoo!価格の再チェックを開始しました{label}"}
+    return {
+        "started": True,
+        "message": f"再チェックを開始しました（名目還元 {camp['rate']}%／{camp['summary']}）",
+    }
 
 
 @router.delete("/candidate/{candidate_id}")

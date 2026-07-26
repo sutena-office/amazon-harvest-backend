@@ -183,15 +183,15 @@ def discover_similar_asins(traits: dict) -> list:
 
 
 def _profit_calc(amazon_price: int, yahoo_price: int, store_point: int = 0,
-                 coupon: int = None, extra_rate: float = 0.0, dt=None) -> dict:
+                 coupon: int = None, scenario: str = "auto", dt=None) -> dict:
     """実務の計算式で利益を算出する。
 
-    実質仕入れ値 =（表示価格 − クーポン）−（支払額 ÷ 1.1 × 総還元率）
+    実質仕入れ値 =（表示価格 − クーポン）− Σ min(各キャンペーン還元, その上限)
     利益         = Amazon売価 ×(1−経費率) − 実質仕入れ値
     """
     from research.yahoo_points import effective_cost
     ec = effective_cost(yahoo_price, store_point=store_point,
-                        coupon=coupon, dt=dt, extra_rate=extra_rate)
+                        coupon=coupon, dt=dt, scenario=scenario)
     sell_net = int(amazon_price * (1 - FEE_RATE))
     profit = sell_net - ec["effective"]
     rate = round(profit / amazon_price * 100, 1) if amazon_price else 0
@@ -412,7 +412,7 @@ def run_sourcing_job(seed_id: str, user_id: str, traits: dict):
 
 
 def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
-                        boost_percent: float = None, boost_cap: int = None) -> dict:
+                        scenario: str = "auto") -> dict:
     """既存候補のYahoo!実質価格を再チェックする（無料・毎日実行可）。
     Keepaは使わないのでトークン消費ゼロ。
 
@@ -421,11 +421,12 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
     if not is_configured():
         return {"checked": 0, "error": "YAHOO_CLIENT_ID未設定"}
 
-    # boost_percent は「今日の還元に対する追加上乗せ」（超PayPay祭等）として扱う。
-    # 未指定なら今日の日付から判定した還元率がそのまま使われる。
-    extra_rate = boost_percent or 0.0
+    # scenario で「どの仕入れ日として計算するか」を切り替える。
+    # auto=実行日の日付から判定 / normal=日付キャンペーンなし /
+    # five_day / five_sun / matsuri
     from research.yahoo_points import campaign_for_date
-    print(f"[SOURCING] 本日の還元: {campaign_for_date()['summary']} (+追加{extra_rate}%)", flush=True)
+    camp = campaign_for_date(scenario=scenario)
+    print(f"[SOURCING] 還元条件[{scenario}] 名目{camp['rate']}%: {camp['summary']}", flush=True)
 
     query = supabase.table("sourcing_candidates").select("*")
     if user_id:
@@ -441,7 +442,7 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
         pr = _profit_calc(
             row["amazon_price"], yahoo["price"],
             store_point=yahoo.get("store_point", 0),
-            extra_rate=extra_rate,
+            scenario=scenario,
         )
         est_sales = int(row.get("est_monthly_sales") or 0)
         expected_monthly = pr["profit_amount"] * est_sales if pr["profit_amount"] > 0 else 0
@@ -479,7 +480,7 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
     if notify and improved:
         _notify_finds(improved)
 
-    print(f"[SOURCING] Yahoo!再スキャン完了 {checked}件 新規利益{len(improved)}件 boost={boost_percent}%", flush=True)
+    print(f"[SOURCING] Yahoo!再スキャン完了 {checked}件 新規利益{len(improved)}件 条件={scenario}", flush=True)
     return {"checked": checked, "new_finds": len(improved)}
 
 
