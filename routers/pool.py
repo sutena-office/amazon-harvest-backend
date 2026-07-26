@@ -204,6 +204,46 @@ async def prune(current_user=Depends(get_current_user)):
     return {"removed": len(removed), "checked": len(rows)}
 
 
+@router.post("/reset")
+async def reset(current_user=Depends(get_current_user)):
+    """監視プールを完全に空にする（Keepaトラッカーも全削除）。
+    カテゴリ方針を変えて作り直すときに使う。"""
+    try:
+        from research.tracking import remove_all_trackers
+        remove_all_trackers()
+        before = (
+            supabase.table("watch_list")
+            .select("id")
+            .eq("user_id", current_user.id)
+            .execute()
+        ).data or []
+        supabase.table("watch_list").delete().eq("user_id", current_user.id).execute()
+        supabase.table("pool_jobs").update(
+            {"status": "stalled"}
+        ).eq("user_id", current_user.id).eq("status", "running").execute()
+        print(f"[POOL] プールリセット完了: {len(before)}件削除", flush=True)
+        return {"ok": True, "removed": len(before)}
+    except Exception as e:
+        print(f"[POOL] リセットエラー: {e}", flush=True)
+        return {"ok": False, "message": str(e)[:200]}
+
+
+@router.get("/budget")
+async def budget(current_user=Depends(get_current_user)):
+    """Keepaのトークン予算と、そこから決まる各種ペースを返す"""
+    from research.keepa_budget import (
+        get_token_status, screening_pace_seconds,
+        tracker_update_interval_hours, deals_scan_interval_hours,
+    )
+    s = get_token_status()
+    return {
+        **s,
+        "screening_pace_seconds": screening_pace_seconds(),
+        "tracker_interval_hours": tracker_update_interval_hours(),
+        "deals_scan_interval_hours": deals_scan_interval_hours(),
+    }
+
+
 @router.get("/list")
 async def list_watch(current_user=Depends(get_current_user), limit: int = 100):
     """監視プールの中身を確認"""

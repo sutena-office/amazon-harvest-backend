@@ -167,8 +167,12 @@ def run_harvest_for_user(setting: dict, parsed_deals: list = None, health_cache:
 def start_scheduler():
     scheduler = BackgroundScheduler()
     # メイン監視はKeepaトラッカー(Webhookプッシュ)。
-    # トラッカー900件の維持費が毎分約4.1トークンを占め、残り予算は約0.9/分
-    # (約1,300/日)。Dealsスキャンはこの予算に収まる3時間間隔とする。
-    scheduler.add_job(run_harvest_for_all_users, "interval", hours=3)
+    # Dealsスキャン(新規発掘)の間隔はプランの補充レートから自動決定する。
+    from research.keepa_budget import deals_scan_interval_hours
+    try:
+        hours = deals_scan_interval_hours()
+    except Exception:
+        hours = 3
+    scheduler.add_job(run_harvest_for_all_users, "interval", hours=hours)
     scheduler.start()
-    logger.info("Harvest Scheduler started - 3時間ごとに実行（メイン監視はWebhook）")
+    logger.info(f"Harvest Scheduler started - {hours}時間ごとに実行（メイン監視はWebhook）")

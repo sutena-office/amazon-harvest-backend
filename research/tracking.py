@@ -18,12 +18,6 @@ supabase = get_client()
 
 BATCH_SIZE = 100  # 一括登録の単位
 
-# トラッカーの更新間隔（時間）。
-# トラッカー維持はトークンフローを毎分削る（実測: 1件あたり毎時約0.5トークン）。
-# 1,000件×毎時更新 ≈ -8.3/分 となり5トークン/分プランでは恒常赤字になるため、
-# 4時間間隔（≈ -2.1/分）に抑えてプラン内で回るようにする。
-TRACKER_UPDATE_INTERVAL_HOURS = 4
-
 
 def set_webhook_url() -> bool:
     """KeepaアカウントのWebhook URLをこのアプリに設定する"""
@@ -42,10 +36,11 @@ def set_webhook_url() -> bool:
         return False
 
 
-def add_trackers(items: list) -> dict:
+def add_trackers(items: list, update_interval: int = 4) -> dict:
     """
     トラッカーを一括登録する。
     items: [{"asin": ..., "target_price": ...}, ...]
+    update_interval: 価格チェック間隔（時間）。プランの補充レートから決める。
     """
     url = "https://api.keepa.com/tracking"
     params = {"key": KEEPA_API_KEY, "type": "add"}
@@ -57,7 +52,7 @@ def add_trackers(items: list) -> dict:
             "ttl": 525600,                # 1年間監視（分単位）
             "expireNotify": False,
             "mainDomainId": 5,            # amazon.co.jp
-            "updateInterval": TRACKER_UPDATE_INTERVAL_HOURS,
+            "updateInterval": update_interval,
             "metaData": "amazon-harvest",
             "thresholdValues": [
                 {
@@ -136,10 +131,13 @@ def register_trackers_for_user(user_id: str) -> dict:
         print("[TRACKING] 登録対象なし", flush=True)
         return {"registered": 0}
 
+    from research.keepa_budget import tracker_update_interval_hours
+    interval = tracker_update_interval_hours()
+
     registered = 0
     for i in range(0, len(rows), BATCH_SIZE):
         batch = rows[i : i + BATCH_SIZE]
-        result = add_trackers(batch)
+        result = add_trackers(batch, update_interval=interval)
         if result.get("ok"):
             asins = [r["asin"] for r in batch]
             supabase.table("watch_list").update({"status": "tracking"}).eq(

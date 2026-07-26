@@ -20,7 +20,6 @@ KEEPA_API_KEY = os.getenv("KEEPA_API_KEY")
 supabase = get_client()
 
 KEEPA_TIME_OFFSET = 21564000  # Keepa分 = unix分 - 21564000
-PACE_SECONDS = 13             # 5トークン/分プランで枯渇しないペース
 TARGET_RATIO = 0.77           # 仕入れ目標価格 = 中央値 × 0.77（経費18%+利益5%）
 
 # 取り扱わない商材を除外するためのキーワード/カテゴリ
@@ -181,9 +180,15 @@ def run_screening_job(job_id: str, user_id: str, asins: list, criteria: dict):
     approved = len(already_known)  # 既存分を合格数の初期値にする
     screened = len(asins) - len(remaining)  # 既存分は審査済み扱い
 
+    # 実際のトークン予算からペースを決める（プラン増強時は自動で速くなる）
+    from research.keepa_budget import screening_pace_seconds
+    pace = screening_pace_seconds()
+    eta_hours = round(len(remaining) * pace / 3600, 1)
+
     print(
         f"[SCREEN] 審査開始 job={job_id} 対象={len(asins)}件 "
-        f"（既存{len(already_known)}件はスキップ、残り{len(remaining)}件を審査）",
+        f"（既存{len(already_known)}件はスキップ、残り{len(remaining)}件を審査 / "
+        f"{pace}秒間隔・完了まで約{eta_hours}時間）",
         flush=True,
     )
 
@@ -240,7 +245,7 @@ def run_screening_job(job_id: str, user_id: str, asins: list, criteria: dict):
                 pass
             print(f"[SCREEN] 進捗 {screened}/{len(asins)} 合格{approved}", flush=True)
 
-        time.sleep(PACE_SECONDS)
+        time.sleep(pace)
 
     # 完了処理
     try:
