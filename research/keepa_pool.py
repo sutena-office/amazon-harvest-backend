@@ -9,7 +9,7 @@ KEEPA_API_KEY = os.getenv("KEEPA_API_KEY")
 DEFAULT_CRITERIA = {
     "min_price": 10000,    # プリンター実績に合わせた単価。利益額を確保
     "max_price": 60000,    # 資金拘束リスクの上限
-    "min_sellers": 3,      # Amazon込み新品出品者数
+    "min_sellers": 10,     # 3〜5人は卸契約者限定の危険サイン。10人以上を必須とする
     "min_rank": 1,         # 対象ランキングの上位側
     "max_rank": 50000,     # 対象ランキングの下位側
     "categories": [],      # 空 = 全カテゴリ（UI側で選択）

@@ -27,6 +27,47 @@ supabase = get_client()
 FEE_RATE = 0.18          # Amazon手数料+送料の経費率
 MAX_CANDIDATES = 300     # 種1つあたりの候補上限（Keepaトークン節約）
 
+# 実務者の判定基準（月5〜10万を安定して稼ぐ商品の条件）
+CRIT_SALES_MIN = 200     # 月販200個以上
+CRIT_SALES_GOOD = 300    # 300個以上なら理想的
+CRIT_RANK_IDEAL = 5000   # ランク5,000位以内なら早く売れる
+CRIT_RANK_MAX = 10000    # 1万位が実質的な上限
+# 出品者が3〜5人しかいない商品は「卸契約者しか出品できない」危険サイン。
+# 新規は真贋・卸証明を求められて出品できない可能性が高いため10人以上を必須とする
+CRIT_SELLERS_MIN = 10
+CRIT_SELLERS_GOOD = 12
+
+
+def grade_candidate(monthly_sales: int, rank: int, sellers: int) -> dict:
+    """実務基準で商品をランク付けする。
+    S=全条件を理想水準で満たす / A=条件クリア / B=条件は満たすが弱い / C=不適合"""
+    reasons = []
+    fatal = False
+
+    if sellers < CRIT_SELLERS_MIN:
+        reasons.append(f"出品者{sellers}人（卸契約者限定の疑い・要{CRIT_SELLERS_MIN}人以上）")
+        fatal = True
+    if rank <= 0 or rank > CRIT_RANK_MAX:
+        reasons.append(f"ランク{rank:,}位（上限{CRIT_RANK_MAX:,}位）")
+        fatal = True
+    if monthly_sales < CRIT_SALES_MIN:
+        reasons.append(f"月販{monthly_sales}個（要{CRIT_SALES_MIN}個以上）")
+        fatal = True
+
+    if fatal:
+        return {"grade": "C", "note": " / ".join(reasons)}
+
+    ideal = (
+        monthly_sales >= CRIT_SALES_GOOD
+        and rank <= CRIT_RANK_IDEAL
+        and sellers >= CRIT_SELLERS_GOOD
+    )
+    if ideal:
+        return {"grade": "S", "note": "全条件が理想水準（月販300+・5千位以内・出品者12人+）"}
+    if rank <= CRIT_RANK_IDEAL:
+        return {"grade": "A", "note": "条件クリア（5,000位以内）"}
+    return {"grade": "B", "note": f"条件は満たすがランク{rank:,}位とやや弱い"}
+
 
 def _keepa_product(asin: str, with_history: bool = False) -> dict | None:
     """Keepaから商品情報を1件取得（1トークン）"""
@@ -170,9 +211,12 @@ def evaluate_candidate(asin: str) -> dict | None:
         return None
     rank = _stat(p, "current", 3) or _stat(p, "avg90", 3)
 
-    # 月販目安: 30日間のランキング急落回数（Keepaの販売数代理指標）
+    # 月販数: monthlySoldはAmazonの「過去1か月に○個購入」の実データ（推定ではない）。
+    # 未設定の商品が多いため、その場合のみランク下落回数で代用する（過小評価になる）
     stats = p.get("stats") or {}
-    est_monthly_sales = int(stats.get("salesRankDrops30") or 0)
+    monthly_sold = int(p.get("monthlySold") or 0)
+    est_monthly_sales = monthly_sold or int(stats.get("salesRankDrops30") or 0)
+    sales_is_actual = monthly_sold > 0
     seller_count = _stat(p, "current", 11) or _stat(p, "avg90", 11)
 
     yahoo = search_best_by_jan(ean_list[0])
@@ -185,6 +229,8 @@ def evaluate_candidate(asin: str) -> dict | None:
     # 講座生1人あたりの現実的な月間利益 = 月販を出品者数+1で分け合った場合の取り分
     student_monthly = _student_share(pr["profit_amount"], est_monthly_sales, seller_count)
 
+    g = grade_candidate(est_monthly_sales, rank, seller_count)
+
     return {
         "asin": asin,
         "jan": ean_list[0],
@@ -192,7 +238,10 @@ def evaluate_candidate(asin: str) -> dict | None:
         "amazon_price": amazon_price,
         "amazon_rank": rank,
         "est_monthly_sales": est_monthly_sales,
+        "sales_is_actual": sales_is_actual,
         "seller_count": seller_count,
+        "grade": g["grade"],
+        "grade_note": g["note"],
         "yahoo_price": yahoo["price"],
         "yahoo_point": pr["total_point"],
         "yahoo_effective": pr["effective"],

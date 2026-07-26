@@ -134,14 +134,14 @@ async def list_seeds(current_user=Depends(get_current_user)):
 
 @router.get("/candidates")
 async def list_candidates(current_user=Depends(get_current_user), limit: int = 100):
-    """発掘済み候補を「月間期待利益（利益×月販目安）」の大きい順に返す。
-    プロが商品を選ぶ物差しは利益単価ではなく月間の期待額のため。"""
+    """発掘済み候補を返す。実務基準のグレード（S/A/B/C）順→月間期待利益順。
+    グレードは 月販200個以上・ランク1万位以内・出品者10人以上 で判定する。"""
     res = (
         supabase.table("sourcing_candidates")
         .select("*")
         .eq("user_id", current_user.id)
+        .order("grade")
         .order("expected_monthly_profit", desc=True)
-        .order("profit_amount", desc=True)
         .limit(limit)
         .execute()
     )
