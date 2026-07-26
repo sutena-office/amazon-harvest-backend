@@ -267,13 +267,22 @@ def run_sourcing_job(seed_id: str, user_id: str, traits: dict):
 
 
 def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
-                        boost_percent: float = 0, boost_cap: int = 0) -> dict:
+                        boost_percent: float = None, boost_cap: int = None) -> dict:
     """既存候補のYahoo!実質価格を再チェックする（無料・毎日実行可）。
     Keepaは使わないのでトークン消費ゼロ。
-    boost_percent/boost_cap: キャンペーン日の追加還元想定
-    （例: 5のつく日 = 4%・上限1,000円 / 倍倍ストア併用 = 9%・上限3,000円）"""
+
+    boost未指定なら「今日の日付から自動判定したキャンペーン還元」を適用する
+    （5のつく日・日曜・会員特典）。明示指定すればその条件でシミュレーションできる。"""
     if not is_configured():
         return {"checked": 0, "error": "YAHOO_CLIENT_ID未設定"}
+
+    if boost_percent is None:
+        from research.yahoo_points import campaign_for_date
+        camp = campaign_for_date()
+        boost_percent = camp["rate"]
+        boost_cap = camp["cap"]
+        print(f"[SOURCING] 本日の還元を自動適用: {camp['summary']}", flush=True)
+    boost_cap = boost_cap or 0
 
     query = supabase.table("sourcing_candidates").select("*")
     if user_id:

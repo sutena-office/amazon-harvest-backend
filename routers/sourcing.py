@@ -144,25 +144,35 @@ async def list_candidates(current_user=Depends(get_current_user), limit: int = 1
 
 
 class RescanInput(BaseModel):
-    boost_percent: float = 0   # キャンペーン想定還元率（例: 5のつく日=4）
-    boost_cap: int = 0         # 還元の付与上限円（例: 5のつく日=1000）
+    boost_percent: float | None = None  # 未指定なら今日の日付から自動判定
+    boost_cap: int | None = None
+
+
+@router.get("/campaign")
+async def campaign(current_user=Depends(get_current_user)):
+    """今日の還元状況と、今後2週間の仕入れ狙い目日を返す"""
+    from research.yahoo_points import campaign_for_date, upcoming_best_days
+    return {"today": campaign_for_date(), "upcoming": upcoming_best_days(14)}
 
 
 @router.post("/rescan")
 async def rescan(payload: RescanInput = None, current_user=Depends(get_current_user)):
     """Yahoo!側の価格・ポイントを再チェック（無料・トークン消費なし）。
-    キャンペーン日の還元想定（%と上限円）を渡すと、その条件で利益を再計算する"""
+    boost未指定なら今日のキャンペーン（5のつく日・日曜・会員特典）を自動適用する"""
     from research.sourcing import rescan_yahoo_prices
-    boost = payload.boost_percent if payload else 0
-    cap = payload.boost_cap if payload else 0
+    boost = payload.boost_percent if payload else None
+    cap = payload.boost_cap if payload else None
     thread = threading.Thread(
         target=rescan_yahoo_prices,
         args=(current_user.id, True, boost, cap),
         daemon=True,
     )
     thread.start()
-    label = f"（キャンペーン想定 +{boost}%・上限¥{cap:,}）" if boost else ""
-    return {"started": True, "message": f"Yahoo!価格の再スキャンを開始しました{label}"}
+    if boost is None:
+        label = "（本日の還元を自動適用）"
+    else:
+        label = f"（想定 +{boost}%・上限¥{(cap or 0):,}）"
+    return {"started": True, "message": f"Yahoo!価格の再チェックを開始しました{label}"}
 
 
 @router.delete("/candidate/{candidate_id}")
