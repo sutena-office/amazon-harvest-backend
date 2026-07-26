@@ -128,8 +128,28 @@ def discover_similar_asins(traits: dict) -> list:
         return []
 
 
+def _campaign_bonus(price: int, boost_percent: float, boost_cap: int) -> int:
+    """キャンペーン還元の想定額。5のつく日等は付与上限があるためcapで頭打ちにする"""
+    if boost_percent <= 0:
+        return 0
+    bonus = int(price * boost_percent / 100)
+    return min(bonus, boost_cap) if boost_cap > 0 else bonus
+
+
+def _profit_calc(amazon_price: int, yahoo_effective: int,
+                 boost_percent: float = 0, boost_cap: int = 0,
+                 yahoo_price: int = 0) -> dict:
+    """利益計算。boostはキャンペーン日（5のつく日+4%等）の追加還元想定"""
+    bonus = _campaign_bonus(yahoo_price or yahoo_effective, boost_percent, boost_cap)
+    cost = yahoo_effective - bonus
+    sell_net = int(amazon_price * (1 - FEE_RATE))
+    profit = sell_net - cost
+    rate = round(profit / amazon_price * 100, 1) if amazon_price else 0
+    return {"profit_amount": profit, "profit_rate": rate, "campaign_bonus": bonus}
+
+
 def evaluate_candidate(asin: str) -> dict | None:
-    """候補1件を評価: Keepaで売価とJAN→Yahoo!で実質仕入れ値→利益計算"""
+    """候補1件を評価: Keepaで売価・月販目安・JAN→Yahoo!で実質仕入れ値→利益計算"""
     p = _keepa_product(asin)
     if not p:
         return None
@@ -146,13 +166,17 @@ def evaluate_candidate(asin: str) -> dict | None:
         return None
     rank = _stat(p, "current", 3) or _stat(p, "avg90", 3)
 
+    # 月販目安: 30日間のランキング急落回数（Keepaの販売数代理指標）
+    stats = p.get("stats") or {}
+    est_monthly_sales = int(stats.get("salesRankDrops30") or 0)
+
     yahoo = search_best_by_jan(ean_list[0])
     if not yahoo:
         return None
 
-    sell_net = int(amazon_price * (1 - FEE_RATE))  # 手数料控除後の手取り
-    profit = sell_net - yahoo["effective"]
-    profit_rate = round(profit / amazon_price * 100, 1) if amazon_price else 0
+    pr = _profit_calc(amazon_price, yahoo["effective"], yahoo_price=yahoo["price"])
+    # 月間期待利益 = 利益 × 月販目安（プロが商品を選ぶ本当の物差し）
+    expected_monthly = pr["profit_amount"] * est_monthly_sales if pr["profit_amount"] > 0 else 0
 
     return {
         "asin": asin,
@@ -160,13 +184,15 @@ def evaluate_candidate(asin: str) -> dict | None:
         "product_name": title,
         "amazon_price": amazon_price,
         "amazon_rank": rank,
+        "est_monthly_sales": est_monthly_sales,
         "yahoo_price": yahoo["price"],
         "yahoo_point": yahoo["point"],
         "yahoo_effective": yahoo["effective"],
         "yahoo_url": yahoo["url"],
         "yahoo_store": yahoo["store"],
-        "profit_amount": profit,
-        "profit_rate": profit_rate,
+        "profit_amount": pr["profit_amount"],
+        "profit_rate": pr["profit_rate"],
+        "expected_monthly_profit": expected_monthly,
     }
 
 
@@ -226,9 +252,12 @@ def run_sourcing_job(seed_id: str, user_id: str, traits: dict):
     print(f"[SOURCING] 発掘完了 seed={seed_id} 利益あり{hits}/{checked}件", flush=True)
 
 
-def rescan_yahoo_prices(user_id: str = None, notify: bool = False) -> dict:
+def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
+                        boost_percent: float = 0, boost_cap: int = 0) -> dict:
     """既存候補のYahoo!実質価格を再チェックする（無料・毎日実行可）。
-    Keepaは使わないのでトークン消費ゼロ。"""
+    Keepaは使わないのでトークン消費ゼロ。
+    boost_percent/boost_cap: キャンペーン日の追加還元想定
+    （例: 5のつく日 = 4%・上限1,000円 / 倍倍ストア併用 = 9%・上限3,000円）"""
     if not is_configured():
         return {"checked": 0, "error": "YAHOO_CLIENT_ID未設定"}
 
@@ -243,30 +272,35 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False) -> dict:
         yahoo = search_best_by_jan(row["jan"])
         if not yahoo:
             continue
-        sell_net = int(row["amazon_price"] * (1 - FEE_RATE))
-        profit = sell_net - yahoo["effective"]
-        profit_rate = round(profit / row["amazon_price"] * 100, 1) if row["amazon_price"] else 0
+        pr = _profit_calc(
+            row["amazon_price"], yahoo["effective"],
+            boost_percent=boost_percent, boost_cap=boost_cap,
+            yahoo_price=yahoo["price"],
+        )
+        est_sales = int(row.get("est_monthly_sales") or 0)
+        expected_monthly = pr["profit_amount"] * est_sales if pr["profit_amount"] > 0 else 0
 
         supabase.table("sourcing_candidates").update(
             {
                 "yahoo_price": yahoo["price"],
                 "yahoo_point": yahoo["point"],
-                "yahoo_effective": yahoo["effective"],
+                "yahoo_effective": yahoo["effective"] - pr["campaign_bonus"],
                 "yahoo_url": yahoo["url"],
                 "yahoo_store": yahoo["store"],
-                "profit_amount": profit,
-                "profit_rate": profit_rate,
+                "profit_amount": pr["profit_amount"],
+                "profit_rate": pr["profit_rate"],
+                "expected_monthly_profit": expected_monthly,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         ).eq("id", row["id"]).execute()
         checked += 1
 
         # 利益が新たに閾値を超えたものを通知対象に
-        if notify and profit >= 1000 and (row.get("profit_amount") or 0) < 1000:
+        if notify and pr["profit_amount"] >= 1000 and (row.get("profit_amount") or 0) < 1000:
             improved.append({
                 "product_name": row["product_name"],
-                "profit_amount": profit,
-                "yahoo_effective": yahoo["effective"],
+                "profit_amount": pr["profit_amount"],
+                "yahoo_effective": yahoo["effective"] - pr["campaign_bonus"],
                 "amazon_price": row["amazon_price"],
                 "yahoo_url": yahoo["url"],
                 "asin": row["asin"],
@@ -275,7 +309,7 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False) -> dict:
     if notify and improved:
         _notify_finds(improved)
 
-    print(f"[SOURCING] Yahoo!再スキャン完了 {checked}件 新規利益{len(improved)}件", flush=True)
+    print(f"[SOURCING] Yahoo!再スキャン完了 {checked}件 新規利益{len(improved)}件 boost={boost_percent}%", flush=True)
     return {"checked": checked, "new_finds": len(improved)}
 
 

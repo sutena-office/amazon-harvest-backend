@@ -97,11 +97,13 @@ async def list_seeds(current_user=Depends(get_current_user)):
 
 @router.get("/candidates")
 async def list_candidates(current_user=Depends(get_current_user), limit: int = 100):
-    """発掘済み候補を利益額の大きい順に返す"""
+    """発掘済み候補を「月間期待利益（利益×月販目安）」の大きい順に返す。
+    プロが商品を選ぶ物差しは利益単価ではなく月間の期待額のため。"""
     res = (
         supabase.table("sourcing_candidates")
         .select("*")
         .eq("user_id", current_user.id)
+        .order("expected_monthly_profit", desc=True)
         .order("profit_amount", desc=True)
         .limit(limit)
         .execute()
@@ -109,17 +111,26 @@ async def list_candidates(current_user=Depends(get_current_user), limit: int = 1
     return res.data
 
 
+class RescanInput(BaseModel):
+    boost_percent: float = 0   # キャンペーン想定還元率（例: 5のつく日=4）
+    boost_cap: int = 0         # 還元の付与上限円（例: 5のつく日=1000）
+
+
 @router.post("/rescan")
-async def rescan(current_user=Depends(get_current_user)):
-    """Yahoo!側の価格・ポイントを再チェック（無料・トークン消費なし）"""
+async def rescan(payload: RescanInput = None, current_user=Depends(get_current_user)):
+    """Yahoo!側の価格・ポイントを再チェック（無料・トークン消費なし）。
+    キャンペーン日の還元想定（%と上限円）を渡すと、その条件で利益を再計算する"""
     from research.sourcing import rescan_yahoo_prices
+    boost = payload.boost_percent if payload else 0
+    cap = payload.boost_cap if payload else 0
     thread = threading.Thread(
         target=rescan_yahoo_prices,
-        args=(current_user.id, True),
+        args=(current_user.id, True, boost, cap),
         daemon=True,
     )
     thread.start()
-    return {"started": True, "message": "Yahoo!価格の再スキャンを開始しました（数分で完了）"}
+    label = f"（キャンペーン想定 +{boost}%・上限¥{cap:,}）" if boost else ""
+    return {"started": True, "message": f"Yahoo!価格の再スキャンを開始しました{label}"}
 
 
 @router.delete("/candidate/{candidate_id}")
