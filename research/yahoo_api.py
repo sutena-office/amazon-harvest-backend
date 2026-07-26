@@ -15,7 +15,23 @@ load_dotenv()
 YAHOO_CLIENT_ID = os.getenv("YAHOO_CLIENT_ID")
 
 API_URL = "https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch"
-PACE_SECONDS = 1.1  # 目安1リクエスト/秒を守る
+
+# 商品検索(v3)は「アプリケーションIDごとに1分間30リクエスト」が上限
+# （2022年6月に1日5万件から変更）。30/分=2.0秒間隔なので余裕を持たせる。
+PACE_SECONDS = float(os.getenv("YAHOO_PACE_SECONDS", "2.2"))
+
+# 連続で上限エラーが続いたら打ち切るための状態
+_rate_limited_streak = 0
+RATE_LIMIT_ABORT = 5
+
+
+class YahooRateLimited(Exception):
+    """APIの利用上限に達した（処理を中断すべき状態）"""
+
+
+def reset_rate_limit_state():
+    global _rate_limited_streak
+    _rate_limited_streak = 0
 
 
 def is_configured() -> bool:
@@ -66,14 +82,31 @@ def search_best_by_jan(jan: str) -> dict | None:
         "results": 20,
         "sort": "+price",
     }
+    global _rate_limited_streak
     try:
         res = requests.get(API_URL, params=params, timeout=15)
+
+        # 429は「1分30リクエスト」超過。待って1度だけ再試行する
         if res.status_code == 429:
-            time.sleep(3)
+            print(f"[YAHOO] 上限超過のため60秒待機 JAN={jan}", flush=True)
+            time.sleep(60)
             res = requests.get(API_URL, params=params, timeout=15)
+
+        if res.status_code == 429:
+            _rate_limited_streak += 1
+            print(f"[YAHOO] 上限エラー継続 {_rate_limited_streak}回目 {res.text[:120]}", flush=True)
+            if _rate_limited_streak >= RATE_LIMIT_ABORT:
+                raise YahooRateLimited(
+                    "Yahoo! APIの利用上限に達しました（商品検索は1分30リクエストまで）。"
+                    "時間をおいて再実行してください"
+                )
+            return None
+
         if res.status_code != 200:
             print(f"[YAHOO] JAN={jan} status={res.status_code} {res.text[:150]}", flush=True)
             return None
+
+        _rate_limited_streak = 0  # 成功したら連続カウントをリセット
 
         hits = (res.json() or {}).get("hits") or []
         if not hits:
@@ -94,6 +127,8 @@ def search_best_by_jan(jan: str) -> dict | None:
             if best is None or candidate["effective"] < best["effective"]:
                 best = candidate
         return best
+    except YahooRateLimited:
+        raise          # 上限到達は呼び出し側で処理を止めるため握り潰さない
     except Exception as e:
         print(f"[YAHOO] JAN={jan} 例外: {e}", flush=True)
         return None

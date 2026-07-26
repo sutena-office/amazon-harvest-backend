@@ -153,6 +153,13 @@ class RescanInput(BaseModel):
     scenario: str = "auto"
 
 
+@router.get("/rescan-status")
+async def rescan_status(current_user=Depends(get_current_user)):
+    """直近の再チェックが成功したか（上限で中断していないか）を返す"""
+    from research import sourcing as S
+    return S.LAST_RESCAN or {"status": "none"}
+
+
 @router.get("/campaign")
 async def campaign(current_user=Depends(get_current_user)):
     """今日の還元状況と、今後2週間の仕入れ狙い目日を返す"""

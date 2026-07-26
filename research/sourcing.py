@@ -37,6 +37,9 @@ CRIT_RANK_MAX = 10000    # 1万位が実質的な上限
 CRIT_SELLERS_MIN = 10
 CRIT_SELLERS_GOOD = 12
 
+# 直近の再チェック結果（画面で成否を確認できるようにする）
+LAST_RESCAN: dict = {}
+
 
 def grade_candidate(monthly_sales: int, rank: int, sellers: int) -> dict:
     """実務基準で商品をランク付けする。
@@ -433,10 +436,19 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
         query = query.eq("user_id", user_id)
     rows = (query.execute()).data or []
 
+    from research.yahoo_api import YahooRateLimited, reset_rate_limit_state
+    reset_rate_limit_state()
+
     checked = 0
     improved = []
+    aborted = None
     for row in rows:
-        yahoo = search_best_by_jan(row["jan"])
+        try:
+            yahoo = search_best_by_jan(row["jan"])
+        except YahooRateLimited as e:
+            aborted = str(e)
+            print(f"[SOURCING] 中断: {aborted}（{checked}/{len(rows)}件で停止）", flush=True)
+            break
         if not yahoo:
             continue
         pr = _profit_calc(
@@ -480,8 +492,21 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
     if notify and improved:
         _notify_finds(improved)
 
-    print(f"[SOURCING] Yahoo!再スキャン完了 {checked}件 新規利益{len(improved)}件 条件={scenario}", flush=True)
-    return {"checked": checked, "new_finds": len(improved)}
+    status = "aborted" if aborted else "done"
+    print(f"[SOURCING] Yahoo!再スキャン{status} {checked}/{len(rows)}件 "
+          f"新規利益{len(improved)}件 条件={scenario}", flush=True)
+
+    global LAST_RESCAN
+    LAST_RESCAN = {
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "status": status,
+        "checked": checked,
+        "total": len(rows),
+        "new_finds": len(improved),
+        "scenario": scenario,
+        "error": aborted,
+    }
+    return LAST_RESCAN
 
 
 def _notify_finds(finds: list):
