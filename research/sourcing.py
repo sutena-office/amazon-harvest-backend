@@ -169,6 +169,7 @@ def evaluate_candidate(asin: str) -> dict | None:
     # 月販目安: 30日間のランキング急落回数（Keepaの販売数代理指標）
     stats = p.get("stats") or {}
     est_monthly_sales = int(stats.get("salesRankDrops30") or 0)
+    seller_count = _stat(p, "current", 11) or _stat(p, "avg90", 11)
 
     yahoo = search_best_by_jan(ean_list[0])
     if not yahoo:
@@ -177,6 +178,8 @@ def evaluate_candidate(asin: str) -> dict | None:
     pr = _profit_calc(amazon_price, yahoo["effective"], yahoo_price=yahoo["price"])
     # 月間期待利益 = 利益 × 月販目安（プロが商品を選ぶ本当の物差し）
     expected_monthly = pr["profit_amount"] * est_monthly_sales if pr["profit_amount"] > 0 else 0
+    # 講座生1人あたりの現実的な月間利益 = 月販を出品者数+1で分け合った場合の取り分
+    student_monthly = _student_share(pr["profit_amount"], est_monthly_sales, seller_count)
 
     return {
         "asin": asin,
@@ -185,6 +188,7 @@ def evaluate_candidate(asin: str) -> dict | None:
         "amazon_price": amazon_price,
         "amazon_rank": rank,
         "est_monthly_sales": est_monthly_sales,
+        "seller_count": seller_count,
         "yahoo_price": yahoo["price"],
         "yahoo_point": yahoo["point"],
         "yahoo_effective": yahoo["effective"],
@@ -193,7 +197,17 @@ def evaluate_candidate(asin: str) -> dict | None:
         "profit_amount": pr["profit_amount"],
         "profit_rate": pr["profit_rate"],
         "expected_monthly_profit": expected_monthly,
+        "student_monthly_profit": student_monthly,
     }
+
+
+def _student_share(profit: int, monthly_sales: int, seller_count: int) -> int:
+    """講座生1人が新規参入した場合の現実的な月間利益。
+    月販を「既存出品者+自分」で均等に分け合う想定（カート取得の簡易モデル）"""
+    if profit <= 0 or monthly_sales <= 0:
+        return 0
+    share = monthly_sales / max(seller_count + 1, 1)
+    return int(profit * share)
 
 
 def run_sourcing_job(seed_id: str, user_id: str, traits: dict):
@@ -279,6 +293,9 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
         )
         est_sales = int(row.get("est_monthly_sales") or 0)
         expected_monthly = pr["profit_amount"] * est_sales if pr["profit_amount"] > 0 else 0
+        student_monthly = _student_share(
+            pr["profit_amount"], est_sales, int(row.get("seller_count") or 0)
+        )
 
         supabase.table("sourcing_candidates").update(
             {
@@ -290,6 +307,7 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
                 "profit_amount": pr["profit_amount"],
                 "profit_rate": pr["profit_rate"],
                 "expected_monthly_profit": expected_monthly,
+                "student_monthly_profit": student_monthly,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         ).eq("id", row["id"]).execute()
