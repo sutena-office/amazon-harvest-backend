@@ -174,5 +174,16 @@ def start_scheduler():
     except Exception:
         hours = 3
     scheduler.add_job(run_harvest_for_all_users, "interval", hours=hours)
+
+    # Yahoo!仕入れモード: 実質価格（ポイント込み）の再チェックを毎日実行。
+    # Yahoo! APIは無料なのでKeepaトークンを一切消費しない
+    def rescan_yahoo():
+        try:
+            from research.sourcing import rescan_yahoo_prices
+            rescan_yahoo_prices(notify=True)
+        except Exception as e:
+            logger.error(f"Yahoo rescan error: {e}")
+    scheduler.add_job(rescan_yahoo, "interval", hours=24)
+
     scheduler.start()
-    logger.info(f"Harvest Scheduler started - {hours}時間ごとに実行（メイン監視はWebhook）")
+    logger.info(f"Harvest Scheduler started - Dealsスキャン{hours}時間ごと / Yahoo!再スキャン24時間ごと")

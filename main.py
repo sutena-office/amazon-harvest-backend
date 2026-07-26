@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from routers import users, settings, deals, pool
+from routers import users, settings, deals, pool, sourcing
 from scheduler import start_scheduler
 
 
@@ -25,6 +25,7 @@ app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(deals.router, prefix="/api/deals", tags=["deals"])
 app.include_router(pool.router, prefix="/api/pool", tags=["pool"])
+app.include_router(sourcing.router, prefix="/api/sourcing", tags=["sourcing"])
 
 
 @app.get("/")
