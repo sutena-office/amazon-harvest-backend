@@ -22,21 +22,48 @@ def is_configured() -> bool:
     return bool(YAHOO_CLIENT_ID)
 
 
+# PayPay基本付与率（%）。PayPay/PayPayカード払いの標準還元。
+# APIレスポンスには含まれないため率で加算する
+BASE_POINT_RATE = float(os.getenv("YAHOO_BASE_POINT_RATE", "1.0"))
+# LYPプレミアム会員として計算するか（会員なら店舗ポイントが優遇される）
+USE_PREMIUM = os.getenv("YAHOO_USE_PREMIUM", "true").lower() == "true"
+
+
 def _effective_price(hit: dict) -> dict:
     """ポイント還元を差し引いた実質価格を計算する。
-    クーポンはAPIレスポンスに含まれる場合のみ反映（含まれない店舗が多い）。"""
+
+    重要: point.amount / bonusAmount / premiumAmount 系は
+    Yahoo!側の仕様変更により恒久的に0が返る（2022年4月・2025年2月）。
+    現在ストア独自ポイントが入るのは lyLimited* 系のみ。
+    さらにPayPay基本付与・5のつく日等のキャンペーン分はAPIに含まれないため、
+    基本付与は率で加算し、キャンペーン分は呼び出し側でboostとして上乗せする。
+    """
     price = int(hit.get("price") or 0)
     point = hit.get("point") or {}
-    # premiumAmount = プレミアム会員のポイント。一般はamount
-    point_amount = int(point.get("premiumAmount") or point.get("amount") or 0)
+
+    if USE_PREMIUM:
+        store_point = int(
+            point.get("lyLimitedPremiumBonusAmount")
+            or point.get("lyLimitedBonusAmount")
+            or 0
+        )
+    else:
+        store_point = int(point.get("lyLimitedBonusAmount") or 0)
+
+    base_point = int(price * BASE_POINT_RATE / 100)
+
     coupon_amount = 0
     coupon = hit.get("coupon") or {}
     if isinstance(coupon, dict):
         coupon_amount = int(coupon.get("discount") or 0)
-    effective = price - point_amount - coupon_amount
+
+    total_point = store_point + base_point
+    effective = price - total_point - coupon_amount
     return {
         "price": price,
-        "point": point_amount,
+        "point": total_point,
+        "store_point": store_point,
+        "base_point": base_point,
         "coupon": coupon_amount,
         "effective": effective,
     }

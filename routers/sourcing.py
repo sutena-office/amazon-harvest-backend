@@ -82,6 +82,38 @@ async def register_seed(payload: SeedInput, current_user=Depends(get_current_use
     }
 
 
+@router.get("/debug-yahoo")
+async def debug_yahoo(jan: str, current_user=Depends(get_current_user)):
+    """指定JANのYahoo!生レスポンス（ポイント内訳）を確認する診断用"""
+    import os, requests
+    from research.yahoo_api import API_URL, _effective_price
+    client_id = os.getenv("YAHOO_CLIENT_ID")
+    if not client_id:
+        return {"error": "YAHOO_CLIENT_ID未設定"}
+    params = {
+        "appid": client_id, "jan_code": jan, "condition": "new",
+        "in_stock": "true", "results": 3, "sort": "+price",
+    }
+    try:
+        res = requests.get(API_URL, params=params, timeout=15)
+        hits = (res.json() or {}).get("hits") or []
+        return {
+            "status": res.status_code,
+            "count": len(hits),
+            "items": [
+                {
+                    "name": (h.get("name") or "")[:60],
+                    "price": h.get("price"),
+                    "raw_point": h.get("point"),
+                    "calculated": _effective_price(h),
+                }
+                for h in hits
+            ],
+        }
+    except Exception as e:
+        return {"error": str(e)[:300]}
+
+
 @router.get("/seeds")
 async def list_seeds(current_user=Depends(get_current_user)):
     res = (
