@@ -186,13 +186,14 @@ def start_scheduler():
             logger.error(f"Yahoo rescan error: {e}")
     scheduler.add_job(rescan_yahoo, "interval", hours=24)
 
-    # デプロイ直後に1度だけ、最も条件の良い「5のつく日+日曜」で全件更新する。
+    # デプロイ直後に1度だけ「日曜」条件で全件更新する。
+    # 5のつく日と日曜が重なるのは年に数回しかないため、毎週来る日曜を基準にする。
     # 直前のレート制限から回復するため20分待ってから開始する
     def initial_rescan():
         try:
             from research.sourcing import rescan_until_complete
-            logger.info("初回の全件再チェックを開始（条件: 5のつく日+日曜）")
-            rescan_until_complete(scenario="five_sun")
+            logger.info("初回の全件再チェックを開始（条件: 日曜）")
+            rescan_until_complete(scenario="sunday")
         except Exception as e:
             logger.error(f"Initial rescan error: {e}")
     import threading
@@ -215,7 +216,7 @@ def start_scheduler():
             )
             if stale.data:
                 logger.info("更新が古い候補を検出。全件再チェックを実行")
-                rescan_until_complete(scenario="five_sun", max_rounds=4)
+                rescan_until_complete(scenario="sunday", max_rounds=4)
         except Exception as e:
             logger.error(f"Fill stale error: {e}")
     scheduler.add_job(fill_stale, "interval", hours=3)

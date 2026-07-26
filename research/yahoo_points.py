@@ -81,8 +81,9 @@ ASSUMED_COUPON = int(os.getenv("YAHOO_ASSUMED_COUPON", "0"))
 SCENARIOS = {
     "auto":       None,                              # 実行日の日付から判定
     "normal":     [],                                # 日付キャンペーンなし
+    "sunday":     ["sunday"],                        # 毎週の主戦場
     "five_day":   ["five_day"],
-    "five_sun":   ["five_day", "sunday"],
+    "five_sun":   ["five_day", "sunday"],            # 年に数回しかない
     "matsuri":    ["matsuri"],
 }
 
