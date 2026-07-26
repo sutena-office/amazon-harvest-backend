@@ -178,28 +178,75 @@ async def export_csv(current_user=Depends(get_current_user), only_profitable: bo
     if only_profitable:
         rows = [r for r in rows if (r.get("profit_amount") or 0) > 0]
 
+    from research.yahoo_points import (
+        campaign_for_date, CAMPAIGN_CAP, UNCAPPED_RATE, ASSUMED_COUPON, TAX_RATE,
+    )
+    from research.sourcing import (
+        FEE_RATE, MAX_UNITS_PER_MONTH,
+        CRIT_SALES_MIN, CRIT_RANK_IDEAL, CRIT_RANK_MAX, CRIT_SELLERS_MIN,
+    )
+
     COURSE_PRICE = 550000
+    jst = timezone(timedelta(hours=9))
+    now = datetime.now(jst)
+    camp = campaign_for_date(now)
+    wd = "月火水木金土日"[now.weekday()]
+
     buf = io.StringIO()
     buf.write("﻿")  # ExcelでUTF-8を正しく開くためのBOM
     w = csv.writer(buf)
+
+    # ── 条件ヘッダー（この数字がいつ・どんな前提で出たものかを明記する）──
+    w.writerow(["■ Yahoo!仕入れ候補リスト"])
+    w.writerow(["出力日時", now.strftime(f"%Y-%m-%d（{wd}） %H:%M") + " JST"])
+    w.writerow(["この日の還元条件", camp["summary"]])
+    w.writerow(["名目の総還元率", f'{camp["rate"]:g}%（上限に当たらない場合）'])
+    w.writerow(["ポイント算定の基準", f"税抜価格ベース（税込 ÷ {TAX_RATE}）"])
+    w.writerow(["キャンペーンの付与上限", f"合計 {CAMPAIGN_CAP:,}円"
+                f"（5のつく日は1,000pt=税抜25,000円で頭打ち等。高額品ほど実効還元率は下がる）"])
+    w.writerow(["上限なしの還元", f'{UNCAPPED_RATE:g}%（ストア独自ポイント＋PayPay基本付与）'])
+    w.writerow(["想定クーポン", f"{ASSUMED_COUPON:,}円" if ASSUMED_COUPON else "見込まない（0円）"])
+    w.writerow([])
+    w.writerow(["実質仕入れ値の計算式",
+                "（Yahoo!表示価格 − クーポン） −（支払額 ÷ 1.1 ×〔上限なし還元 ＋ min(上限あり還元, 付与上限)〕）"])
+    w.writerow(["利益の計算式", f"Amazon売価 ×（1 − 経費{FEE_RATE*100:g}%）− 実質仕入れ値"])
+    w.writerow(["月間利益の前提",
+                f"1商品あたり月{MAX_UNITS_PER_MONTH}個まで（週1回の仕入れ日に1個ずつ。"
+                f"Yahoo!ストアの購入制限とポイント付与上限を考慮）／"
+                f"カートで取れる見込み個数（月販 ÷ 出品者数+1）の小さい方"])
+    w.writerow(["判定基準",
+                f"月販{CRIT_SALES_MIN}個以上／ランク{CRIT_RANK_IDEAL:,}位以内（上限{CRIT_RANK_MAX:,}位）／"
+                f"出品者{CRIT_SELLERS_MIN}人以上"])
+    w.writerow(["注意",
+                "ポイント還元・クーポンは購入時点の条件で変動します。"
+                "高額商品の仕入れ前にYahoo!の商品ページで実際の付与ポイントを確認してください"])
+    w.writerow([])
+
     w.writerow([
         "グレード", "商品名", "ASIN", "JAN",
         "Amazonランク", "月販数", "出品者数",
         "Yahoo!表示価格", "ポイント還元", "実質仕入れ値",
-        "Amazon売価", "利益/個", "利益率(%)", "月間期待利益",
-        "講座生1人あたり月間利益", "講座ペイ月数",
+        "Amazon売価", "利益/個", "利益率(%)",
+        f"月間利益(月{MAX_UNITS_PER_MONTH}個前提)", "月の仕入れ可能数",
+        "講座ペイ月数", "月30万に必要な商品数",
         "Yahoo!商品URL", "Amazon商品URL", "Keepaグラフ",
         "ストア名", "判定メモ",
     ])
     for r in rows:
-        student = r.get("student_monthly_profit") or 0
-        payback = round(COURSE_PRICE / student, 1) if student > 0 else ""
+        monthly = r.get("student_monthly_profit") or 0
+        profit_each = r.get("profit_amount") or 0
+        sales = r.get("est_monthly_sales") or 0
+        sellers = r.get("seller_count") or 0
+        cart_units = sales / max(sellers + 1, 1) if sales else 0
+        units = min(MAX_UNITS_PER_MONTH, round(cart_units, 1)) if profit_each > 0 else 0
+        payback = round(COURSE_PRICE / monthly, 1) if monthly > 0 else ""
+        need = -(-300000 // monthly) if monthly > 0 else ""  # 切り上げ
         w.writerow([
             r.get("grade", ""), r.get("product_name", ""), r.get("asin", ""), r.get("jan", ""),
-            r.get("amazon_rank", 0), r.get("est_monthly_sales", 0), r.get("seller_count", 0),
+            r.get("amazon_rank", 0), sales, sellers,
             r.get("yahoo_price", 0), r.get("yahoo_point", 0), r.get("yahoo_effective", 0),
-            r.get("amazon_price", 0), r.get("profit_amount", 0), r.get("profit_rate", 0),
-            r.get("expected_monthly_profit", 0), student, payback,
+            r.get("amazon_price", 0), profit_each, r.get("profit_rate", 0),
+            monthly, units, payback, need,
             r.get("yahoo_url", ""),
             f"https://www.amazon.co.jp/dp/{r.get('asin','')}",
             f"https://keepa.com/#!product/5-{r.get('asin','')}",

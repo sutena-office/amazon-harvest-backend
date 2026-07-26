@@ -237,10 +237,10 @@ def evaluate_candidate(asin: str) -> dict | None:
         return None
 
     pr = _profit_calc(amazon_price, yahoo["price"], store_point=yahoo.get("store_point", 0))
-    # 月間期待利益 = 利益 × 月販目安（プロが商品を選ぶ本当の物差し）
-    expected_monthly = pr["profit_amount"] * est_monthly_sales if pr["profit_amount"] > 0 else 0
-    # 講座生1人あたりの現実的な月間利益 = 月販を出品者数+1で分け合った場合の取り分
+    # 実現可能な月間利益 = 利益/個 × min(月の仕入れ上限, カートで取れる見込み個数)
+    # 「市場全体の月販 × 利益」ではなく、自分が実際に回せる数で見積もる
     student_monthly = _student_share(pr["profit_amount"], est_monthly_sales, seller_count)
+    expected_monthly = student_monthly
 
     g = grade_candidate(est_monthly_sales, rank, seller_count)
 
@@ -267,13 +267,29 @@ def evaluate_candidate(asin: str) -> dict | None:
     }
 
 
+# 1商品あたり月に仕入れられる個数の上限。
+# Yahoo!ストアの購入制限（「お一人さま1点限り」）とポイント付与上限があるため、
+# 仕入れ日（5のつく日・日曜）ごとに1個ずつ買う運用を想定する。
+MAX_UNITS_PER_MONTH = int(os.getenv("SOURCING_MAX_UNITS_PER_MONTH", "4"))
+
+
+def _sellable_units(monthly_sales: int, seller_count: int) -> float:
+    """自分が新規参入した場合に月に売れる見込み個数（カート取得の簡易モデル）"""
+    if monthly_sales <= 0:
+        return 0.0
+    return monthly_sales / max(seller_count + 1, 1)
+
+
 def _student_share(profit: int, monthly_sales: int, seller_count: int) -> int:
-    """講座生1人が新規参入した場合の現実的な月間利益。
-    月販を「既存出品者+自分」で均等に分け合う想定（カート取得の簡易モデル）"""
+    """1人が現実に得られる月間利益。
+
+    「売れる数」と「買える数」の小さい方で決まる。
+    高額商品はYahoo!側の購入制限が効くため、実務では買える数が上限になる。
+    """
     if profit <= 0 or monthly_sales <= 0:
         return 0
-    share = monthly_sales / max(seller_count + 1, 1)
-    return int(profit * share)
+    units = min(float(MAX_UNITS_PER_MONTH), _sellable_units(monthly_sales, seller_count))
+    return int(profit * units)
 
 
 def resume_stalled_seeds():
