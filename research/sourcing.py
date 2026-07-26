@@ -120,22 +120,8 @@ def analyze_seed(asin: str) -> dict | None:
     }
 
 
-def discover_similar_asins(traits: dict) -> list:
-    """Product Finderで種に似た商品のASINを探す（同カテゴリ×同ブランド×近い価格帯）"""
-    price = traits["reference_price"]
-    selection = {
-        "rootCategory": [int(traits["root_category"])],
-        "current_NEW_gte": int(price * 0.4),
-        "current_NEW_lte": int(price * 2.5),
-        "current_COUNT_NEW_gte": 3,
-        "current_SALES_gte": 1,
-        "current_SALES_lte": 100000,
-        "perPage": MAX_CANDIDATES,
-        "page": 0,
-    }
-    if traits.get("brand"):
-        selection["brand"] = [traits["brand"]]
-
+def _query_finder(selection: dict) -> list:
+    """Product Finderを1回叩く。失敗時は空リスト"""
     try:
         res = requests.post(
             "https://api.keepa.com/query",
@@ -146,27 +132,54 @@ def discover_similar_asins(traits: dict) -> list:
         if res.status_code != 200:
             print(f"[SOURCING] Product Finder status={res.status_code} {res.text[:200]}", flush=True)
             return []
-        data = res.json()
-        asins = data.get("asinList") or []
-        print(f"[SOURCING] 類似候補 {len(asins)}件（ブランド={traits.get('brand') or '指定なし'}）", flush=True)
-
-        # ブランド一致で少なすぎる場合はブランド条件を外して再検索
-        if len(asins) < 30 and traits.get("brand"):
-            selection.pop("brand", None)
-            res2 = requests.post(
-                "https://api.keepa.com/query",
-                params={"key": KEEPA_API_KEY, "domain": 5},
-                json=selection,
-                timeout=60,
-            )
-            if res2.status_code == 200:
-                extra = (res2.json() or {}).get("asinList") or []
-                asins = list(dict.fromkeys(asins + extra))[:MAX_CANDIDATES]
-                print(f"[SOURCING] ブランド外拡張後 {len(asins)}件", flush=True)
-        return asins
+        return (res.json() or {}).get("asinList") or []
     except Exception as e:
         print(f"[SOURCING] Product Finder例外: {e}", flush=True)
         return []
+
+
+def discover_similar_asins(traits: dict) -> list:
+    """Product Finderで種に似た商品を探す。
+
+    重要: 判定基準（出品者10人以上・ランク1万位以内・月販200個以上）を
+    ここで先に適用する。1件ずつの評価は1商品=1トークンかかるため、
+    落ちると分かっている商品を評価対象に入れないことがトークン節約の要。
+    """
+    price = traits["reference_price"]
+    base = {
+        "rootCategory": [int(traits["root_category"])],
+        "current_NEW_gte": int(price * 0.4),
+        "current_NEW_lte": int(price * 2.5),
+        "current_COUNT_NEW_gte": CRIT_SELLERS_MIN,   # 出品者10人以上
+        "current_SALES_gte": 1,
+        "current_SALES_lte": CRIT_RANK_MAX,          # ランク1万位以内
+        "monthlySold_gte": CRIT_SALES_MIN,           # 月販200個以上
+        "perPage": MAX_CANDIDATES,
+        "page": 0,
+    }
+
+    # 段階的に条件を緩める。上ほど質が高い
+    steps = [
+        ("基準厳守・同ブランド", {**base, "brand": [traits["brand"]]} if traits.get("brand") else base),
+        ("基準厳守・全ブランド", base),
+        # monthlySoldは未設定の商品が多いため、0件なら外して評価側で判定する
+        ("月販条件を外す・同ブランド",
+         {**{k: v for k, v in base.items() if k != "monthlySold_gte"},
+          **({"brand": [traits["brand"]]} if traits.get("brand") else {})}),
+        ("月販条件を外す・全ブランド",
+         {k: v for k, v in base.items() if k != "monthlySold_gte"}),
+    ]
+
+    asins: list = []
+    for label, sel in steps:
+        found = _query_finder(sel)
+        asins = list(dict.fromkeys(asins + found))[:MAX_CANDIDATES]
+        print(f"[SOURCING] 候補抽出[{label}] +{len(found)}件 → 累計{len(asins)}件", flush=True)
+        if len(asins) >= 40:
+            break
+
+    print(f"[SOURCING] 判定基準で事前絞り込み済み {len(asins)}件を評価対象とする", flush=True)
+    return asins
 
 
 def _profit_calc(amazon_price: int, yahoo_price: int, store_point: int = 0,
