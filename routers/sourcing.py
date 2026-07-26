@@ -283,7 +283,7 @@ async def rescan(payload: RescanInput = None, current_user=Depends(get_current_u
     """Yahoo!側の価格・ポイントを再チェック（無料・トークン消費なし）。
     scenarioで「どの仕入れ日として計算するか」を切り替える。
     各キャンペーンの付与上限が個別に適用される。"""
-    from research.sourcing import rescan_yahoo_prices
+    from research.sourcing import rescan_until_complete
     from research.yahoo_points import campaign_for_date, SCENARIOS
 
     scenario = (payload.scenario if payload else "auto") or "auto"
@@ -291,15 +291,17 @@ async def rescan(payload: RescanInput = None, current_user=Depends(get_current_u
         return {"started": False, "message": f"不正な条件: {scenario}"}
 
     camp = campaign_for_date(scenario=scenario)
+    # レート制限で中断しても時間をおいて自動再開し、全件更新まで粘る
     thread = threading.Thread(
-        target=rescan_yahoo_prices,
-        args=(current_user.id, True, scenario),
+        target=rescan_until_complete,
+        kwargs={"user_id": current_user.id, "scenario": scenario},
         daemon=True,
     )
     thread.start()
     return {
         "started": True,
-        "message": f"再チェックを開始しました（名目還元 {camp['rate']}%／{camp['summary']}）",
+        "message": f"再チェックを開始しました（名目還元 {camp['rate']}%／{camp['summary']}）"
+                   "。上限に当たった場合は自動で待機して再開します",
     }
 
 

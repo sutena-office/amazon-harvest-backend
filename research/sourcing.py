@@ -431,10 +431,12 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
     camp = campaign_for_date(scenario=scenario)
     print(f"[SOURCING] 還元条件[{scenario}] 名目{camp['rate']}%: {camp['summary']}", flush=True)
 
+    # 更新が古い行から処理する。中断→再開時に未更新分から進むため、
+    # 何ラウンドかに分かれても最終的に全件が最新条件で揃う
     query = supabase.table("sourcing_candidates").select("*")
     if user_id:
         query = query.eq("user_id", user_id)
-    rows = (query.execute()).data or []
+    rows = (query.order("updated_at", desc=False).execute()).data or []
 
     from research.yahoo_api import YahooRateLimited, reset_rate_limit_state
     reset_rate_limit_state()
@@ -506,6 +508,29 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
         "scenario": scenario,
         "error": aborted,
     }
+    return LAST_RESCAN
+
+
+def rescan_until_complete(user_id: str = None, scenario: str = "auto",
+                          max_rounds: int = 8, wait_seconds: int = 900):
+    """レート制限で中断しても時間をおいて自動で再開し、全件更新まで粘る。
+
+    Yahoo!の1分30リクエスト制限は時間経過で回復するため、
+    中断したら15分待って続きから再実行する。
+    未更新の行から処理されるわけではないが、上限に当たった分は
+    次のラウンドで最新値に上書きされる。
+    """
+    for i in range(max_rounds):
+        result = rescan_yahoo_prices(user_id=user_id, notify=True, scenario=scenario)
+        if result.get("status") == "done":
+            print(f"[SOURCING] 全件更新が完了しました（{i+1}ラウンド目）", flush=True)
+            return result
+        if result.get("error") and "未設定" in str(result.get("error")):
+            return result
+        print(f"[SOURCING] 上限で中断。{wait_seconds//60}分待って再開します "
+              f"（{i+1}/{max_rounds}ラウンド）", flush=True)
+        time.sleep(wait_seconds)
+    print("[SOURCING] 最大ラウンド数に達しました", flush=True)
     return LAST_RESCAN
 
 
