@@ -92,6 +92,38 @@ def _arr(a: list, i: int) -> int:
     return int(v) if v and v > 0 else 0
 
 
+def _has_rebound_history(
+    history: list,
+    median: int,
+    days: int = 90,
+    drop_ratio: float = 0.80,
+    recover_ratio: float = 0.95,
+) -> bool:
+    """
+    「一度20%以上値下がりして、その後定価水準に戻った」実績があるか。
+
+    刈り取りは『価格が戻る』ことが利益の前提。過去90日間に
+    急落→復帰のサイクルが実在した商品だけを監視することで、
+    下がったまま戻らない商品（オワコン化）を構造的に排除する。
+    """
+    if not history or len(history) < 4 or not median:
+        return False
+    cutoff = _keepa_minutes_ago(days)
+    drop_line = median * drop_ratio       # 中央値から20%下
+    recover_line = median * recover_ratio  # 中央値の95% = ほぼ定価に復帰
+
+    dipped = False
+    for i in range(0, len(history) - 1, 2):
+        t, v = history[i], history[i + 1]
+        if t < cutoff or not v or v <= 0:
+            continue
+        if v <= drop_line:
+            dipped = True
+        elif dipped and v >= recover_line:
+            return True  # 急落→復帰を確認
+    return False
+
+
 def screen_asin(asin: str, criteria: dict) -> dict:
     """1 ASINを審査する（1トークン消費）"""
     url = "https://api.keepa.com/product"
@@ -140,11 +172,18 @@ def screen_asin(asin: str, criteria: dict) -> dict:
         if seller_now > 0 and seller_now < seller_90 * 0.5:
             return {"ok": False, "reason": f"出品者急減({seller_90}→{seller_now}人)"}
 
-        # ランキング
+        # ランキング（min_rank〜max_rankの範囲指定）
         rank = _arr(current, 3) or _arr(avg90, 3)
+        min_rank = criteria.get("min_rank") or 1
         max_rank = criteria.get("max_rank", 50000)
-        if rank == 0 or rank > max_rank:
+        if rank == 0 or rank < min_rank or rank > max_rank:
             return {"ok": False, "reason": f"ランク圏外({rank}位)"}
+
+        # リバウンド実績: 90日間に「20%以上の急落→定価水準に復帰」が
+        # 1回以上あった商品のみ合格。価格が戻らない商品を排除する
+        new_history = csv[1] if len(csv) > 1 else []
+        if not _has_rebound_history(new_history, median):
+            return {"ok": False, "reason": "リバウンド実績なし(急落→復帰の履歴がない)"}
 
         # Amazon本体の在庫有無（プラス材料として記録）
         amazon_in_stock = _arr(current, 0) > 0
