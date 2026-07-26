@@ -263,11 +263,48 @@ def _student_share(profit: int, monthly_sales: int, seller_count: int) -> int:
     return int(profit * share)
 
 
-def run_sourcing_job(seed_id: str, user_id: str, traits: dict):
-    """種→派生の発掘バッチ（バックグラウンドスレッドで実行）"""
-    from research.keepa_budget import screening_pace_seconds
-    pace = screening_pace_seconds()
+def resume_stalled_seeds():
+    """中断された発掘ジョブを再開する。
+    Render Freeはバックグラウンドスレッドが再起動で落ちるため、
+    起動時とスケジューラから定期的に呼んで取りこぼしを防ぐ。"""
+    try:
+        res = (
+            supabase.table("sourcing_seeds")
+            .select("*")
+            .eq("status", "running")
+            .execute()
+        )
+        for seed in res.data or []:
+            # 進捗が全件に達していれば完了扱いにする
+            if seed.get("total") and seed.get("checked", 0) >= seed["total"]:
+                supabase.table("sourcing_seeds").update(
+                    {"status": "done",
+                     "finished_at": datetime.now(timezone.utc).isoformat()}
+                ).eq("id", seed["id"]).execute()
+                continue
 
+            import threading
+            traits = {
+                "asin": seed["asin"],
+                "title": seed.get("title", ""),
+                "brand": seed.get("brand", ""),
+                "root_category": seed.get("root_category") or 0,
+                "reference_price": seed.get("reference_price") or 0,
+            }
+            print(f"[SOURCING] 中断ジョブを再開: {seed['asin']} "
+                  f"({seed.get('checked',0)}/{seed.get('total',0)})", flush=True)
+            threading.Thread(
+                target=run_sourcing_job,
+                args=(seed["id"], seed["user_id"], traits),
+                daemon=True,
+            ).start()
+    except Exception as e:
+        print(f"[SOURCING] 再開処理エラー: {e}", flush=True)
+
+
+def run_sourcing_job(seed_id: str, user_id: str, traits: dict):
+    """種→派生の発掘バッチ（バックグラウンドスレッドで実行）。
+    評価済みASINはスキップするため、中断→再実行で続きから再開できる。"""
     asins = discover_similar_asins(traits)
     if not asins:
         supabase.table("sourcing_seeds").update(
@@ -275,12 +312,34 @@ def run_sourcing_job(seed_id: str, user_id: str, traits: dict):
         ).eq("id", seed_id).execute()
         return
 
-    supabase.table("sourcing_seeds").update({"total": len(asins)}).eq("id", seed_id).execute()
-    print(f"[SOURCING] 発掘開始 seed={seed_id} 候補={len(asins)}件 ペース={pace}秒/件", flush=True)
+    # このseedで評価済みのASINは飛ばす（中断→再開のため）
+    done_res = (
+        supabase.table("sourcing_candidates")
+        .select("asin, profit_amount")
+        .eq("user_id", user_id)
+        .eq("seed_id", seed_id)
+        .execute()
+    )
+    done_rows = done_res.data or []
+    done_asins = {r["asin"] for r in done_rows}
+    remaining = [a for a in asins if a not in done_asins]
 
-    checked = 0
-    hits = 0
-    for asin in asins:
+    checked = len(asins) - len(remaining)
+    hits = sum(1 for r in done_rows if (r.get("profit_amount") or 0) > 0)
+
+    # 残件数でペースを算出する（手持ちトークンも考慮）
+    from research.keepa_budget import screening_pace_seconds
+    pace = screening_pace_seconds(len(remaining)) if remaining else 3
+
+    supabase.table("sourcing_seeds").update(
+        {"total": len(asins), "checked": checked, "hits": hits}
+    ).eq("id", seed_id).execute()
+    eta_h = round(len(remaining) * pace / 3600, 1)
+    print(f"[SOURCING] 発掘開始 seed={seed_id} 候補={len(asins)}件 "
+          f"（済{checked}件はスキップ・残{len(remaining)}件）"
+          f"ペース={pace}秒/件 完了まで約{eta_h}時間", flush=True)
+
+    for asin in remaining:
         result = evaluate_candidate(asin)
         if result and result.get("retry"):
             print("[SOURCING] トークン待ち120秒", flush=True)
@@ -304,10 +363,14 @@ def run_sourcing_job(seed_id: str, user_id: str, traits: dict):
             except Exception as e:
                 print(f"[SOURCING] DB保存エラー {asin}: {e}", flush=True)
 
-        if checked % 10 == 0 or checked == len(asins):
+        # 進捗は毎件反映する（10件ごとだと画面上は止まって見えるため）
+        try:
             supabase.table("sourcing_seeds").update(
                 {"checked": checked, "hits": hits}
             ).eq("id", seed_id).execute()
+        except Exception:
+            pass
+        if checked % 10 == 0 or checked == len(asins):
             print(f"[SOURCING] 進捗 {checked}/{len(asins)} 利益あり{hits}件", flush=True)
 
         time.sleep(pace)

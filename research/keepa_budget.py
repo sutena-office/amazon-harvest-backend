@@ -47,15 +47,36 @@ def get_token_status() -> dict:
         return dict(_FALLBACK)
 
 
-def screening_pace_seconds() -> int:
+# Webhook処理など他用途のために常に残しておくトークン
+TOKEN_RESERVE = 50
+
+
+def screening_pace_seconds(item_count: int = None) -> int:
     """審査1件あたりの待機秒数。
-    トラッカー維持費を差し引いた実質の余剰トークンから算出する。"""
+
+    補充レートだけでなく「手持ちのトークン残高」も考慮する。
+    残高で全件まかなえるなら待つ必要がないため大幅に速く回せる
+    （例: 残299・214件 → 補充待ちゼロで最速）。
+    """
     s = get_token_status()
     spare = s["refill_rate"] - s["flow_reduction"]
     usable = max(0.5, spare * 0.9)  # 1割は他処理用に残す
-    pace = int(60 / usable)
+
+    if item_count and item_count > 0:
+        available = max(0, s["tokens_left"] - TOKEN_RESERVE)
+        # 手持ちで足りない分だけを補充待ちする
+        needed_from_refill = max(0, item_count - available)
+        min_seconds = (needed_from_refill / usable) * 60
+        pace = int(min_seconds / item_count)
+    else:
+        pace = int(60 / usable)
+
     pace = max(3, min(pace, 60))  # 3〜60秒に収める
-    print(f"[BUDGET] 審査ペース: {pace}秒/件", flush=True)
+    print(
+        f"[BUDGET] 審査ペース: {pace}秒/件"
+        f"（残{s['tokens_left']} / 対象{item_count or '?'}件）",
+        flush=True,
+    )
     return pace
 
 

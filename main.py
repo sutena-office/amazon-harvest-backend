@@ -8,6 +8,13 @@ from scheduler import start_scheduler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     start_scheduler()
+    # デプロイ・再起動で落ちた発掘ジョブを起動直後に拾い直す
+    try:
+        import threading
+        from research.sourcing import resume_stalled_seeds
+        threading.Timer(30, resume_stalled_seeds).start()
+    except Exception as e:
+        print(f"[MAIN] 発掘ジョブ再開の予約に失敗: {e}", flush=True)
     yield
 
 

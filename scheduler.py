@@ -185,5 +185,15 @@ def start_scheduler():
             logger.error(f"Yahoo rescan error: {e}")
     scheduler.add_job(rescan_yahoo, "interval", hours=24)
 
+    # Render Freeはバックグラウンドスレッドが再起動で落ちるため、
+    # 中断された発掘ジョブを定期的に拾って再開する（評価済みはスキップされる）
+    def resume_sourcing():
+        try:
+            from research.sourcing import resume_stalled_seeds
+            resume_stalled_seeds()
+        except Exception as e:
+            logger.error(f"Sourcing resume error: {e}")
+    scheduler.add_job(resume_sourcing, "interval", minutes=20)
+
     scheduler.start()
     logger.info(f"Harvest Scheduler started - Dealsスキャン{hours}時間ごと / Yahoo!再スキャン24時間ごと")
