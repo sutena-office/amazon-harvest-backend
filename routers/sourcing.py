@@ -160,6 +160,62 @@ async def campaign(current_user=Depends(get_current_user)):
     return {"today": campaign_for_date(), "upcoming": upcoming_best_days(14)}
 
 
+@router.get("/export")
+async def export_csv(current_user=Depends(get_current_user), only_profitable: bool = True):
+    """仕入れ候補をCSVで書き出す（Excel/Googleスプレッドシートでそのまま開ける）"""
+    import csv, io
+    from fastapi.responses import StreamingResponse
+    from datetime import datetime, timezone, timedelta
+
+    q = (
+        supabase.table("sourcing_candidates")
+        .select("*")
+        .eq("user_id", current_user.id)
+        .order("grade")
+        .order("expected_monthly_profit", desc=True)
+    )
+    rows = (q.execute()).data or []
+    if only_profitable:
+        rows = [r for r in rows if (r.get("profit_amount") or 0) > 0]
+
+    COURSE_PRICE = 550000
+    buf = io.StringIO()
+    buf.write("﻿")  # ExcelでUTF-8を正しく開くためのBOM
+    w = csv.writer(buf)
+    w.writerow([
+        "グレード", "商品名", "ASIN", "JAN",
+        "Amazonランク", "月販数", "出品者数",
+        "Yahoo!表示価格", "ポイント還元", "実質仕入れ値",
+        "Amazon売価", "利益/個", "利益率(%)", "月間期待利益",
+        "講座生1人あたり月間利益", "講座ペイ月数",
+        "Yahoo!商品URL", "Amazon商品URL", "Keepaグラフ",
+        "ストア名", "判定メモ",
+    ])
+    for r in rows:
+        student = r.get("student_monthly_profit") or 0
+        payback = round(COURSE_PRICE / student, 1) if student > 0 else ""
+        w.writerow([
+            r.get("grade", ""), r.get("product_name", ""), r.get("asin", ""), r.get("jan", ""),
+            r.get("amazon_rank", 0), r.get("est_monthly_sales", 0), r.get("seller_count", 0),
+            r.get("yahoo_price", 0), r.get("yahoo_point", 0), r.get("yahoo_effective", 0),
+            r.get("amazon_price", 0), r.get("profit_amount", 0), r.get("profit_rate", 0),
+            r.get("expected_monthly_profit", 0), student, payback,
+            r.get("yahoo_url", ""),
+            f"https://www.amazon.co.jp/dp/{r.get('asin','')}",
+            f"https://keepa.com/#!product/5-{r.get('asin','')}",
+            r.get("yahoo_store", ""), r.get("grade_note", ""),
+        ])
+
+    buf.seek(0)
+    jst = timezone(timedelta(hours=9))
+    fname = f"sourcing_{datetime.now(jst).strftime('%Y%m%d_%H%M')}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 @router.post("/rescan")
 async def rescan(payload: RescanInput = None, current_user=Depends(get_current_user)):
     """Yahoo!側の価格・ポイントを再チェック（無料・トークン消費なし）。
