@@ -87,6 +87,7 @@ async def debug_yahoo(jan: str, current_user=Depends(get_current_user)):
     """指定JANのYahoo!生レスポンス（ポイント内訳）を確認する診断用"""
     import os, requests
     from research.yahoo_api import API_URL, _effective_price
+    from research.yahoo_points import effective_cost
     client_id = os.getenv("YAHOO_CLIENT_ID")
     if not client_id:
         return {"error": "YAHOO_CLIENT_ID未設定"}
@@ -105,7 +106,11 @@ async def debug_yahoo(jan: str, current_user=Depends(get_current_user)):
                     "name": (h.get("name") or "")[:60],
                     "price": h.get("price"),
                     "raw_point": h.get("point"),
-                    "calculated": _effective_price(h),
+                    "api_parsed": _effective_price(h),
+                    "cost_model": effective_cost(
+                        int(h.get("price") or 0),
+                        store_point=_effective_price(h)["store_point"],
+                    ),
                 }
                 for h in hits
             ],

@@ -22,21 +22,17 @@ def is_configured() -> bool:
     return bool(YAHOO_CLIENT_ID)
 
 
-# PayPay基本付与率（%）。PayPay/PayPayカード払いの標準還元。
-# APIレスポンスには含まれないため率で加算する
-BASE_POINT_RATE = float(os.getenv("YAHOO_BASE_POINT_RATE", "1.0"))
-# LYPプレミアム会員として計算するか（会員なら店舗ポイントが優遇される）
 USE_PREMIUM = os.getenv("YAHOO_USE_PREMIUM", "true").lower() == "true"
 
 
 def _effective_price(hit: dict) -> dict:
-    """ポイント還元を差し引いた実質価格を計算する。
+    """APIレスポンスから価格とストア独自ポイントを取り出す。
+    実質価格の算出（税抜ベースの還元・クーポン・キャンペーン）は
+    yahoo_points.effective_cost が担当する。
 
     重要: point.amount / bonusAmount / premiumAmount 系は
     Yahoo!側の仕様変更により恒久的に0が返る（2022年4月・2025年2月）。
     現在ストア独自ポイントが入るのは lyLimited* 系のみ。
-    さらにPayPay基本付与・5のつく日等のキャンペーン分はAPIに含まれないため、
-    基本付与は率で加算し、キャンペーン分は呼び出し側でboostとして上乗せする。
     """
     price = int(hit.get("price") or 0)
     point = hit.get("point") or {}
@@ -50,22 +46,11 @@ def _effective_price(hit: dict) -> dict:
     else:
         store_point = int(point.get("lyLimitedBonusAmount") or 0)
 
-    base_point = int(price * BASE_POINT_RATE / 100)
-
-    coupon_amount = 0
-    coupon = hit.get("coupon") or {}
-    if isinstance(coupon, dict):
-        coupon_amount = int(coupon.get("discount") or 0)
-
-    total_point = store_point + base_point
-    effective = price - total_point - coupon_amount
     return {
         "price": price,
-        "point": total_point,
         "store_point": store_point,
-        "base_point": base_point,
-        "coupon": coupon_amount,
-        "effective": effective,
+        # 最安判定用。実際の実質価格はyahoo_points側で再計算される
+        "effective": price - store_point,
     }
 
 
@@ -99,10 +84,11 @@ def search_best_by_jan(jan: str) -> dict | None:
             ep = _effective_price(hit)
             if ep["price"] <= 0:
                 continue
+            url = hit.get("url") or ""
             candidate = {
                 **ep,
                 "name": (hit.get("name") or "")[:200],
-                "url": hit.get("url") or "",
+                "url": url,
                 "store": ((hit.get("seller") or {}).get("name") or "")[:100],
             }
             if best is None or candidate["effective"] < best["effective"]:

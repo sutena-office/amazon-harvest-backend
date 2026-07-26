@@ -1,28 +1,40 @@
 """
-Yahoo!ショッピングのポイント還元を日付から自動判定する。
+Yahoo!ショッピングのポイント還元・クーポンを実務の計算式どおりに算出する。
 
-還元は3層に分かれる:
-  1) ストア独自ポイント … Yahoo! APIのlyLimitedBonusAmountから取得（yahoo_api.py）
-  2) 日付で決まる定期キャンペーン … このモジュールが担当（外部取得不要）
-  3) 本人の会員ステータス … 環境変数で設定（APIからは取得不可能）
+実務モデルケース（エプソン EW-M638T / 2026-07 実測）:
+    表示価格      41,272円
+    クーポン      -3,100円   （ヤマダグループ等でよく出る）
+    支払額        38,172円
+    ポイント27%    9,292円   ← 税抜価格ベース（38,172 ÷ 1.1 × 0.27）
+    実質価格      28,880円 ≒ 29,000円
 
-不定期の大型キャンペーン（超PayPay祭等）だけは手動で上乗せ率を指定する。
+還元は3層の合算:
+  1) ストア独自 … Yahoo! APIのlyLimitedBonusAmountから実測（例12.5%）
+  2) 日付キャンペーン … 5のつく日+4% / プレミアムな日曜日+5%（このモジュールが判定）
+  3) 会員・決済由来 … LINE連携/PayPayカード/基本付与など（設定値）
 """
 import os
 from datetime import datetime, timezone, timedelta
 
 JST = timezone(timedelta(hours=9))
+TAX_RATE = 1.10  # ポイント算定は税抜ベースのため税込価格から割り戻す
 
-# 定期キャンペーン（2026年時点の公表値）
-FIVE_DAY_RATE = 4.0       # 5のつく日: +4%
-FIVE_DAY_CAP = 1000       # 付与上限1,000ポイント
-SUNDAY_RATE = 5.0         # プレミアムな日曜日: +5%（LYPプレミアム会員向け）
-SUNDAY_CAP = 1000         # 付与上限（保守的に1,000で見積もる）
+# 日付で確定する定期キャンペーンの上乗せ
+FIVE_DAY_RATE = 4.0
+SUNDAY_RATE = 5.0
 
-# 本人の会員ステータス由来の上乗せ（通常日でも常時付く分）
-# 例: LYPプレミアム+2% / LINE連携 など。実際の値はYahoo!の商品ページで確認して設定する
-MEMBERSHIP_RATE = float(os.getenv("YAHOO_MEMBERSHIP_RATE", "2.0"))
+# 通常日の総還元率（ストア独自ポイント＋会員＋決済＋常時エントリーの合計）。
+# 実務モデルケース: 日曜に27% → 22 + 日曜5 = 27 で一致する。
+# 実際の還元は商品ページの「〇%獲得」で確認し、この値を調整する。
+BASE_TOTAL_RATE = float(os.getenv("YAHOO_BASE_TOTAL_RATE", "22.0"))
 IS_PREMIUM = os.getenv("YAHOO_USE_PREMIUM", "true").lower() == "true"
+
+# 付与上限。実務では複数キャンペーンが重なり上限がほぼ効かないため既定0（無効）。
+# 高単価品で上限を効かせたい場合のみ設定する
+POINT_CAP = int(os.getenv("YAHOO_POINT_CAP", "0"))
+
+# 想定クーポン（ヤマダ・キムラヤ・ベスト電機等で恒常的に出る割引）
+ASSUMED_COUPON = int(os.getenv("YAHOO_ASSUMED_COUPON", "0"))
 
 
 def today_jst() -> datetime:
@@ -30,44 +42,73 @@ def today_jst() -> datetime:
 
 
 def campaign_for_date(dt: datetime = None) -> dict:
-    """指定日（既定は今日/JST）に自動適用されるキャンペーン還元を返す"""
+    """指定日の総還元率（通常日ぶん＋日付キャンペーン）を返す"""
     dt = dt or today_jst()
-    parts = []
-    rate = 0.0
-    cap = 0
+    parts = [f"通常還元 {BASE_TOTAL_RATE:g}%"]
+    rate = BASE_TOTAL_RATE
 
     if dt.day in (5, 15, 25):
         parts.append(f"5のつく日 +{FIVE_DAY_RATE:g}%")
         rate += FIVE_DAY_RATE
-        cap += FIVE_DAY_CAP
 
-    if dt.weekday() == 6 and IS_PREMIUM:  # 6=日曜
-        parts.append(f"プレミアムな日曜日 +{SUNDAY_RATE:g}%")
+    if dt.weekday() == 6 and IS_PREMIUM:
+        parts.append(f"日曜 +{SUNDAY_RATE:g}%")
         rate += SUNDAY_RATE
-        cap += SUNDAY_CAP
-
-    if MEMBERSHIP_RATE > 0:
-        parts.append(f"会員特典 +{MEMBERSHIP_RATE:g}%")
-        rate += MEMBERSHIP_RATE
-        # 会員特典は通常上限なし扱い（上限は日付キャンペーン側で効かせる）
 
     return {
         "date": dt.strftime("%Y-%m-%d"),
         "rate": rate,
-        "cap": cap,
+        "cap": POINT_CAP,
         "labels": parts,
-        "summary": " / ".join(parts) if parts else "通常日（追加キャンペーンなし）",
+        "summary": " / ".join(parts),
+    }
+
+
+def effective_cost(price: int, store_point: int = 0, coupon: int = None,
+                   dt: datetime = None, extra_rate: float = 0.0) -> dict:
+    """実質仕入れ値を実務の計算式で算出する。
+
+    実務モデル: 実質 =（表示価格 − クーポン）−（支払額 ÷ 1.1 × 総還元率）
+    ポイントは税抜価格ベースで付与されるため 1.1 で割り戻す。
+
+    price:       Yahoo!の表示価格（税込）
+    store_point: APIから取れたストア独自ポイント（参考表示用。総還元率に内包済み）
+    coupon:      クーポン割引額。Noneなら環境変数の想定値
+    extra_rate:  超PayPay祭など不定期キャンペーンの上乗せ率
+    """
+    coupon = ASSUMED_COUPON if coupon is None else coupon
+    coupon = min(coupon, price)
+    payment = price - coupon
+    taxable_base = int(payment / TAX_RATE)
+
+    camp = campaign_for_date(dt)
+    total_rate = camp["rate"] + extra_rate
+    total_point = int(taxable_base * total_rate / 100)
+    if POINT_CAP > 0:
+        total_point = min(total_point, POINT_CAP)
+
+    effective = payment - total_point
+
+    return {
+        "price": price,
+        "coupon": coupon,
+        "payment": payment,
+        "store_point": store_point,   # APIの実測値（参考。総還元率に含まれる想定）
+        "total_point": total_point,
+        "total_rate": round(total_rate, 1),
+        "effective": effective,
+        "campaign_summary": camp["summary"],
     }
 
 
 def upcoming_best_days(days_ahead: int = 14) -> list:
-    """今後の「仕入れに向いた日」を還元率順に返す（仕入れ計画用）"""
+    """今後の仕入れ狙い目日（還元率順）"""
     base = today_jst()
     results = []
     for i in range(days_ahead):
         d = base + timedelta(days=i)
         c = campaign_for_date(d)
-        if c["rate"] > MEMBERSHIP_RATE:  # 会員特典だけの日は除外
+        if c["rate"] > BASE_TOTAL_RATE:
             results.append({
                 "date": c["date"],
                 "weekday": "月火水木金土日"[d.weekday()],

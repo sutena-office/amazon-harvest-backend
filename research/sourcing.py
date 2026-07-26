@@ -128,24 +128,28 @@ def discover_similar_asins(traits: dict) -> list:
         return []
 
 
-def _campaign_bonus(price: int, boost_percent: float, boost_cap: int) -> int:
-    """キャンペーン還元の想定額。5のつく日等は付与上限があるためcapで頭打ちにする"""
-    if boost_percent <= 0:
-        return 0
-    bonus = int(price * boost_percent / 100)
-    return min(bonus, boost_cap) if boost_cap > 0 else bonus
+def _profit_calc(amazon_price: int, yahoo_price: int, store_point: int = 0,
+                 coupon: int = None, extra_rate: float = 0.0, dt=None) -> dict:
+    """実務の計算式で利益を算出する。
 
-
-def _profit_calc(amazon_price: int, yahoo_effective: int,
-                 boost_percent: float = 0, boost_cap: int = 0,
-                 yahoo_price: int = 0) -> dict:
-    """利益計算。boostはキャンペーン日（5のつく日+4%等）の追加還元想定"""
-    bonus = _campaign_bonus(yahoo_price or yahoo_effective, boost_percent, boost_cap)
-    cost = yahoo_effective - bonus
+    実質仕入れ値 =（表示価格 − クーポン）−（支払額 ÷ 1.1 × 総還元率）
+    利益         = Amazon売価 ×(1−経費率) − 実質仕入れ値
+    """
+    from research.yahoo_points import effective_cost
+    ec = effective_cost(yahoo_price, store_point=store_point,
+                        coupon=coupon, dt=dt, extra_rate=extra_rate)
     sell_net = int(amazon_price * (1 - FEE_RATE))
-    profit = sell_net - cost
+    profit = sell_net - ec["effective"]
     rate = round(profit / amazon_price * 100, 1) if amazon_price else 0
-    return {"profit_amount": profit, "profit_rate": rate, "campaign_bonus": bonus}
+    return {
+        "profit_amount": profit,
+        "profit_rate": rate,
+        "effective": ec["effective"],
+        "total_point": ec["total_point"],
+        "total_rate": ec["total_rate"],
+        "coupon": ec["coupon"],
+        "payment": ec["payment"],
+    }
 
 
 def evaluate_candidate(asin: str) -> dict | None:
@@ -175,7 +179,7 @@ def evaluate_candidate(asin: str) -> dict | None:
     if not yahoo:
         return None
 
-    pr = _profit_calc(amazon_price, yahoo["effective"], yahoo_price=yahoo["price"])
+    pr = _profit_calc(amazon_price, yahoo["price"], store_point=yahoo.get("store_point", 0))
     # 月間期待利益 = 利益 × 月販目安（プロが商品を選ぶ本当の物差し）
     expected_monthly = pr["profit_amount"] * est_monthly_sales if pr["profit_amount"] > 0 else 0
     # 講座生1人あたりの現実的な月間利益 = 月販を出品者数+1で分け合った場合の取り分
@@ -190,8 +194,8 @@ def evaluate_candidate(asin: str) -> dict | None:
         "est_monthly_sales": est_monthly_sales,
         "seller_count": seller_count,
         "yahoo_price": yahoo["price"],
-        "yahoo_point": yahoo["point"],
-        "yahoo_effective": yahoo["effective"],
+        "yahoo_point": pr["total_point"],
+        "yahoo_effective": pr["effective"],
         "yahoo_url": yahoo["url"],
         "yahoo_store": yahoo["store"],
         "profit_amount": pr["profit_amount"],
@@ -276,13 +280,11 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
     if not is_configured():
         return {"checked": 0, "error": "YAHOO_CLIENT_ID未設定"}
 
-    if boost_percent is None:
-        from research.yahoo_points import campaign_for_date
-        camp = campaign_for_date()
-        boost_percent = camp["rate"]
-        boost_cap = camp["cap"]
-        print(f"[SOURCING] 本日の還元を自動適用: {camp['summary']}", flush=True)
-    boost_cap = boost_cap or 0
+    # boost_percent は「今日の還元に対する追加上乗せ」（超PayPay祭等）として扱う。
+    # 未指定なら今日の日付から判定した還元率がそのまま使われる。
+    extra_rate = boost_percent or 0.0
+    from research.yahoo_points import campaign_for_date
+    print(f"[SOURCING] 本日の還元: {campaign_for_date()['summary']} (+追加{extra_rate}%)", flush=True)
 
     query = supabase.table("sourcing_candidates").select("*")
     if user_id:
@@ -296,9 +298,9 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
         if not yahoo:
             continue
         pr = _profit_calc(
-            row["amazon_price"], yahoo["effective"],
-            boost_percent=boost_percent, boost_cap=boost_cap,
-            yahoo_price=yahoo["price"],
+            row["amazon_price"], yahoo["price"],
+            store_point=yahoo.get("store_point", 0),
+            extra_rate=extra_rate,
         )
         est_sales = int(row.get("est_monthly_sales") or 0)
         expected_monthly = pr["profit_amount"] * est_sales if pr["profit_amount"] > 0 else 0
@@ -309,8 +311,8 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
         supabase.table("sourcing_candidates").update(
             {
                 "yahoo_price": yahoo["price"],
-                "yahoo_point": yahoo["point"],
-                "yahoo_effective": yahoo["effective"] - pr["campaign_bonus"],
+                "yahoo_point": pr["total_point"],
+                "yahoo_effective": pr["effective"],
                 "yahoo_url": yahoo["url"],
                 "yahoo_store": yahoo["store"],
                 "profit_amount": pr["profit_amount"],
@@ -327,7 +329,7 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
             improved.append({
                 "product_name": row["product_name"],
                 "profit_amount": pr["profit_amount"],
-                "yahoo_effective": yahoo["effective"] - pr["campaign_bonus"],
+                "yahoo_effective": pr["effective"],
                 "amazon_price": row["amazon_price"],
                 "yahoo_url": yahoo["url"],
                 "asin": row["asin"],
