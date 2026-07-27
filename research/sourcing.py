@@ -458,11 +458,13 @@ def rescan_yahoo_prices(user_id: str = None, notify: bool = False,
             store_point=yahoo.get("store_point", 0),
             scenario=scenario,
         )
+        # 「市場の月販×利益」ではなく、自分が実際に回せる数で見積もる
+        # （月の仕入れ上限とカート取得見込みの小さい方）
         est_sales = int(row.get("est_monthly_sales") or 0)
-        expected_monthly = pr["profit_amount"] * est_sales if pr["profit_amount"] > 0 else 0
         student_monthly = _student_share(
             pr["profit_amount"], est_sales, int(row.get("seller_count") or 0)
         )
+        expected_monthly = student_monthly
 
         supabase.table("sourcing_candidates").update(
             {

@@ -277,6 +277,26 @@ async def export_csv(current_user=Depends(get_current_user), only_profitable: bo
                 "高額商品の仕入れ前にYahoo!の商品ページで実際の付与ポイントを確認してください"])
     w.writerow([])
 
+    # ── 月30万円までの到達見込み（上位から積み上げ）──
+    _ranked = sorted(rows, key=lambda r: -(r.get("expected_monthly_profit") or 0))
+    _total = sum(r.get("expected_monthly_profit") or 0 for r in _ranked)
+    _acc, _need = 0, 0
+    for _r in _ranked:
+        if _acc >= 300000:
+            break
+        _acc += _r.get("expected_monthly_profit") or 0
+        _need += 1
+    _avg = int(_total / len(_ranked)) if _ranked else 0
+    w.writerow(["■ 月30万円までの見込み"])
+    w.writerow(["利益が出る候補数", f"{len(_ranked)}件"])
+    w.writerow(["1商品あたりの平均月間利益", f"{_avg:,}円（月{MAX_UNITS_PER_MONTH}個前提）"])
+    w.writerow(["全候補を回した場合の月間利益", f"{_total:,}円"])
+    if _acc >= 300000:
+        w.writerow(["月30万円に必要な品目数", f"上位{_need}品目"])
+    else:
+        w.writerow(["月30万円への不足額", f"{300000 - _total:,}円（現候補では届きません）"])
+    w.writerow([])
+
     w.writerow([
         "グレード", "商品名", "ASIN", "JAN",
         "Amazonランク", "月販数", "出品者数",
