@@ -196,8 +196,19 @@ async def export_csv(current_user=Depends(get_current_user), only_profitable: bo
     COURSE_PRICE = 550000
     jst = timezone(timedelta(hours=9))
     now = datetime.now(jst)
-    camp = campaign_for_date(now)
     wd = "月火水木金土日"[now.weekday()]
+
+    # 表の数値は「最後に再チェックした条件」で計算されている。
+    # 出力日の条件ではなくそちらを表示しないと、ヘッダーと中身が食い違う
+    from research import sourcing as S
+    last = S.LAST_RESCAN or {}
+    used_scenario = last.get("scenario") or "auto"
+    camp = campaign_for_date(now, used_scenario)
+    SCENARIO_LABEL = {
+        "auto": "実行日の日付から自動判定", "normal": "通常日",
+        "sunday": "日曜（プレミアムな日曜日）", "five_day": "5のつく日",
+        "five_sun": "5のつく日＋日曜", "matsuri": "超PayPay祭",
+    }
 
     buf = io.StringIO()
     buf.write("﻿")  # ExcelでUTF-8を正しく開くためのBOM
@@ -205,7 +216,22 @@ async def export_csv(current_user=Depends(get_current_user), only_profitable: bo
 
     # ── 条件ヘッダー（この数字がいつ・どんな前提で出たものかを明記する）──
     w.writerow(["■ Yahoo!仕入れ候補リスト"])
-    w.writerow(["出力日時", now.strftime(f"%Y-%m-%d（{wd}） %H:%M") + " JST"])
+    w.writerow(["CSV出力日時", now.strftime(f"%Y-%m-%d（{wd}） %H:%M") + " JST"])
+    w.writerow(["★ 計算に使った仕入れ日条件",
+                SCENARIO_LABEL.get(used_scenario, used_scenario)
+                + "（この条件で実質価格・利益を算出しています）"])
+    if last.get("finished_at"):
+        try:
+            _f = datetime.fromisoformat(last["finished_at"]).astimezone(jst)
+            _fw = "月火水木金土日"[_f.weekday()]
+            w.writerow(["価格を取得した日時",
+                        _f.strftime(f"%Y-%m-%d（{_fw}） %H:%M") + " JST"
+                        + f"（{last.get('checked',0)}/{last.get('total',0)}件を更新）"])
+        except Exception:
+            pass
+    if last.get("status") == "aborted":
+        w.writerow(["⚠️ 注意", "前回の再チェックは途中で中断しました。"
+                    "一部の行は古い条件のままの可能性があります"])
     w.writerow(["名目の総還元率", f'{camp["rate"]:g}%（付与上限に当たらない場合）'])
     w.writerow(["ポイント算定の基準", f"税抜価格ベース（税込 ÷ {TAX_RATE}）"])
     w.writerow(["想定クーポン", f"{ASSUMED_COUPON:,}円" if ASSUMED_COUPON else "見込まない（0円）"])
