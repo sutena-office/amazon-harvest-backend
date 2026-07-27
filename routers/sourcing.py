@@ -140,12 +140,27 @@ async def list_candidates(current_user=Depends(get_current_user), limit: int = 1
         supabase.table("sourcing_candidates")
         .select("*")
         .eq("user_id", current_user.id)
-        .order("grade")
         .order("expected_monthly_profit", desc=True)
         .limit(limit)
         .execute()
     )
-    return res.data
+    return sort_by_grade(res.data or [])
+
+
+# S/A/B/C はアルファベット順に並べるとSが最後になるため明示的に順位を持たせる
+GRADE_ORDER = {"S": 0, "A": 1, "B": 2, "C": 3}
+
+
+def sort_by_grade(rows: list) -> list:
+    """グレード順（S→A→B→C）→月間利益の大きい順に並べ替える"""
+    return sorted(
+        rows,
+        key=lambda r: (
+            GRADE_ORDER.get(r.get("grade"), 9),
+            -(r.get("expected_monthly_profit") or 0),
+            -(r.get("profit_amount") or 0),
+        ),
+    )
 
 
 class RescanInput(BaseModel):
@@ -178,12 +193,11 @@ async def export_csv(current_user=Depends(get_current_user), only_profitable: bo
         supabase.table("sourcing_candidates")
         .select("*")
         .eq("user_id", current_user.id)
-        .order("grade")
-        .order("expected_monthly_profit", desc=True)
     )
     rows = (q.execute()).data or []
     if only_profitable:
         rows = [r for r in rows if (r.get("profit_amount") or 0) > 0]
+    rows = sort_by_grade(rows)   # S→A→B→C の順（アルファベット順ではSが最後になるため）
 
     from research.yahoo_points import (
         campaign_for_date, campaigns, active_campaign_keys, ASSUMED_COUPON, TAX_RATE,
