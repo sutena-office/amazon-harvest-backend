@@ -283,6 +283,28 @@ def _sellable_units(monthly_sales: int, seller_count: int) -> float:
     return monthly_sales / max(seller_count + 1, 1)
 
 
+def enrich_candidate(row: dict) -> dict:
+    """月間利益を「表示のたびに」計算し直す。
+
+    DBに保存した値をそのまま出すと、計算式を直しても再チェックが走るまで
+    古い数字が表示され続けるため、派生値は都度算出する。
+    """
+    profit = row.get("profit_amount") or 0
+    sales = row.get("est_monthly_sales") or 0
+    sellers = row.get("seller_count") or 0
+
+    cart_units = _sellable_units(sales, sellers)
+    units = min(float(MAX_UNITS_PER_MONTH), cart_units) if profit > 0 else 0.0
+    monthly = int(profit * units)
+
+    row = dict(row)
+    row["monthly_units"] = round(units, 1)
+    row["cart_units"] = round(cart_units, 1)
+    row["expected_monthly_profit"] = monthly
+    row["student_monthly_profit"] = monthly
+    return row
+
+
 def _student_share(profit: int, monthly_sales: int, seller_count: int) -> int:
     """1人が現実に得られる月間利益。
 

@@ -136,15 +136,17 @@ async def list_seeds(current_user=Depends(get_current_user)):
 async def list_candidates(current_user=Depends(get_current_user), limit: int = 100):
     """発掘済み候補を返す。実務基準のグレード（S/A/B/C）順→月間期待利益順。
     グレードは 月販200個以上・ランク1万位以内・出品者10人以上 で判定する。"""
+    from research.sourcing import enrich_candidate
     res = (
         supabase.table("sourcing_candidates")
         .select("*")
         .eq("user_id", current_user.id)
-        .order("expected_monthly_profit", desc=True)
         .limit(limit)
         .execute()
     )
-    return sort_by_grade(res.data or [])
+    # 月間利益は保存値ではなく都度計算する（古い値が表示されるのを防ぐ）
+    rows = [enrich_candidate(r) for r in (res.data or [])]
+    return sort_by_grade(rows)
 
 
 # S/A/B/C はアルファベット順に並べるとSが最後になるため明示的に順位を持たせる
@@ -194,7 +196,8 @@ async def export_csv(current_user=Depends(get_current_user), only_profitable: bo
         .select("*")
         .eq("user_id", current_user.id)
     )
-    rows = (q.execute()).data or []
+    from research.sourcing import enrich_candidate
+    rows = [enrich_candidate(r) for r in ((q.execute()).data or [])]
     if only_profitable:
         rows = [r for r in rows if (r.get("profit_amount") or 0) > 0]
     rows = sort_by_grade(rows)   # S→A→B→C の順（アルファベット順ではSが最後になるため）
