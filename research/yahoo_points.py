@@ -32,10 +32,11 @@ def _i(name: str, default: int) -> int:
 def campaigns() -> dict:
     return {
         "store": {
-            # 倍倍ストア等の店舗独自分。実測モデルケース（日曜に総27%）に
-            # 合わせて既定15%。APIから実額が取れる商品ではそちらを優先する
+            # 店舗独自分。一般的な店は7%前後で、倍倍ストア対象店だけが
+            # 15%超になる。過大評価して赤字仕入れをするのを避けるため
+            # 既定は保守的に7%とし、APIから実額が取れる商品はそちらを優先する
             "label": "ストア独自ポイント",
-            "rate": _f("YAHOO_STORE_RATE", 15.0),
+            "rate": _f("YAHOO_STORE_RATE", 7.0),
             "cap": _i("YAHOO_STORE_CAP", 0),          # 上限なし
         },
         "base": {
@@ -161,20 +162,25 @@ def effective_cost(price: int, store_point: int = 0, coupon: int = None,
     total_lost = 0
     nominal_rate = 0.0
 
+    store_is_actual = False
     for k in keys:
         c = defs[k]
-        nominal_rate += c["rate"]
+        rate = c["rate"]
         if k == "store" and store_point > 0:
-            raw = store_point          # API実測値を優先
+            raw = store_point                       # APIから取れた実額を優先
+            store_is_actual = True
+            rate = round(store_point / taxable_base * 100, 1) if taxable_base else 0
         else:
             raw = int(taxable_base * c["rate"] / 100)
+        nominal_rate += rate
         granted = min(raw, c["cap"]) if c["cap"] > 0 else raw
         total_point += granted
         total_lost += raw - granted
         breakdown.append({
-            "key": k, "label": c["label"], "rate": c["rate"],
+            "key": k, "label": c["label"], "rate": rate,
             "cap": c["cap"], "raw": raw, "granted": granted,
             "capped": raw > granted,
+            "is_actual": k == "store" and store_is_actual,
         })
 
     effective = payment - total_point
@@ -190,6 +196,7 @@ def effective_cost(price: int, store_point: int = 0, coupon: int = None,
         "cap_hit": total_lost > 0,
         "total_rate": actual_rate,                 # 上限適用後の実効還元率
         "nominal_rate": round(nominal_rate, 1),    # 上限がなければ得られた率
+        "store_is_actual": store_is_actual,        # ストアPがAPI実測か推定か
         "effective": effective,
         "breakdown": breakdown,
         "campaign_summary": campaign_for_date(dt, scenario)["summary"],
