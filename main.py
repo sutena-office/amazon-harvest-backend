@@ -11,10 +11,22 @@ async def lifespan(app: FastAPI):
     # デプロイ・再起動で落ちた発掘ジョブを起動直後に拾い直す
     try:
         import threading
-        from research.sourcing import resume_stalled_seeds
-        threading.Timer(30, resume_stalled_seeds).start()
+
+        def _resume_all():
+            try:
+                from research.sourcing import resume_stalled_seeds
+                resume_stalled_seeds()
+            except Exception as e:
+                print(f"[MAIN] 発掘ジョブ再開エラー: {e}", flush=True)
+            try:
+                from research.screening import resume_stalled_pool_jobs
+                resume_stalled_pool_jobs()
+            except Exception as e:
+                print(f"[MAIN] プール構築再開エラー: {e}", flush=True)
+
+        threading.Timer(30, _resume_all).start()
     except Exception as e:
-        print(f"[MAIN] 発掘ジョブ再開の予約に失敗: {e}", flush=True)
+        print(f"[MAIN] ジョブ再開の予約に失敗: {e}", flush=True)
     yield
 
 

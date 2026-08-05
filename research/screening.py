@@ -205,6 +205,49 @@ def screen_asin(asin: str, criteria: dict) -> dict:
         return {"ok": False, "reason": f"例外: {e}"}
 
 
+def resume_stalled_pool_jobs():
+    """中断されたプール構築ジョブを再開する。
+
+    Render Freeはデプロイや再起動のたびにバックグラウンドスレッドが落ちる。
+    審査済みASINはスキップされるので、同じ条件で呼び直せば続きから進む。
+    """
+    try:
+        res = (
+            supabase.table("pool_jobs")
+            .select("*")
+            .eq("status", "running")
+            .execute()
+        )
+        for job in res.data or []:
+            total = job.get("total") or 0
+            checked = job.get("checked") or 0
+            if total and checked >= total:
+                supabase.table("pool_jobs").update(
+                    {"status": "done",
+                     "finished_at": datetime.now(timezone.utc).isoformat()}
+                ).eq("id", job["id"]).execute()
+                continue
+
+            # 構築時の条件をジョブから復元する（無ければ既定値）
+            from research.keepa_pool import find_pool_asins, DEFAULT_CRITERIA
+            criteria = job.get("criteria") or dict(DEFAULT_CRITERIA)
+            result = find_pool_asins(criteria)
+            asins = result.get("asins", [])
+            if not asins:
+                print(f"[SCREEN] 再開できず（候補0件）job={job['id']}", flush=True)
+                continue
+
+            import threading
+            print(f"[SCREEN] 中断ジョブを再開: {checked}/{total}件", flush=True)
+            threading.Thread(
+                target=run_screening_job,
+                args=(job["id"], job["user_id"], asins, criteria),
+                daemon=True,
+            ).start()
+    except Exception as e:
+        print(f"[SCREEN] 再開処理エラー: {e}", flush=True)
+
+
 def run_screening_job(job_id: str, user_id: str, asins: list, criteria: dict):
     """
     審査バッチ本体（バックグラウンドスレッドで実行）。

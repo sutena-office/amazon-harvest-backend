@@ -60,17 +60,21 @@ async def build(criteria: PoolCriteria, current_user=Depends(get_current_user)):
         if not asins:
             return {"started": False, "message": f"該当商品なし: {result.get('error', '')}"}
 
+        merged = {**DEFAULT_CRITERIA,
+                  **{k: v for k, v in criteria.model_dump().items() if v is not None}}
         job = (
             supabase.table("pool_jobs")
-            .insert({"user_id": current_user.id, "status": "running", "total": len(asins)})
+            .insert({
+                "user_id": current_user.id, "status": "running",
+                "total": len(asins),
+                "criteria": merged,   # 中断→再開時に同じ条件で続けるため保存
+            })
             .execute()
         )
         job_id = job.data[0]["id"]
     except Exception as e:
         print(f"[POOL] 構築開始エラー: {e}", flush=True)
         return {"started": False, "message": f"エラー: {str(e)[:200]}"}
-
-    merged = {**DEFAULT_CRITERIA, **{k: v for k, v in criteria.model_dump().items() if v is not None}}
 
     from research.screening import run_screening_job
     thread = threading.Thread(

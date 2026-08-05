@@ -229,6 +229,12 @@ def start_scheduler():
             resume_stalled_seeds()
         except Exception as e:
             logger.error(f"Sourcing resume error: {e}")
+        try:
+            # あまかりのプール構築（審査バッチ）も同様に再開する
+            from research.screening import resume_stalled_pool_jobs
+            resume_stalled_pool_jobs()
+        except Exception as e:
+            logger.error(f"Pool resume error: {e}")
     scheduler.add_job(resume_sourcing, "interval", minutes=20)
 
     scheduler.start()
